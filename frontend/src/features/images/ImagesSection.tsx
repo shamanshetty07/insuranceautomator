@@ -6,8 +6,18 @@ import { useAsync } from "../../lib/useAsync";
 import { ImageUploader } from "./ImageUploader";
 import { StoredImageGrid } from "./StoredImageGrid";
 
-export function ImagesSection({ inspectionId }: { inspectionId: string }) {
-  const { state, reload } = useAsync(() => listImages(inspectionId), [inspectionId]);
+interface Props {
+  inspectionId: string;
+  /** Called after an upload or delete changes the stored images. */
+  onChange?: () => void;
+}
+
+export function ImagesSection({ inspectionId, onChange }: Props) {
+  const { state, reload: reloadImages } = useAsync(() => listImages(inspectionId), [inspectionId]);
+  const reload = () => {
+    reloadImages();
+    onChange?.();
+  };
   const count = state.status === "success" ? state.data.total : 0;
 
   return (

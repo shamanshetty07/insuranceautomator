@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     min_image_side_px: int = Field(default=32, gt=0)
     max_image_pixels: int = Field(default=40_000_000, gt=0)
 
+    # Damage detection (local inference only). "none" disables it. Ultralytics needs
+    # the optional `detection` extra and a local weights file; relative paths resolve
+    # against the process working directory (backend/).
+    detector_backend: Literal["none", "ultralytics"] = "none"
+    detector_weights_path: Path | None = None
+    detector_model_name: str | None = Field(default=None, max_length=100)
+    detector_model_version: str | None = Field(default=None, max_length=100)
+    detector_confidence_threshold: float = Field(default=0.25, ge=0, le=1)
+    detector_iou_threshold: float = Field(default=0.45, ge=0, le=1)
+    detector_image_size: int = Field(default=640, gt=0)
+    detector_max_detections: int = Field(default=100, gt=0)
+    detector_device: str | None = "cpu"
+
 
 @lru_cache
 def get_settings() -> Settings:

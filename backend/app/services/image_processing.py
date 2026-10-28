@@ -64,11 +64,13 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
         ) from None
 
     with image:
-        if image.format not in SUPPORTED_FORMATS:
+        # Multi-picture JPEGs (MPO, from many phone cameras) are JPEGs; frame 0 is kept.
+        image_format = "JPEG" if image.format == "MPO" else image.format
+        if image_format not in SUPPORTED_FORMATS:
             raise AppError(
                 415, "unsupported_media_type", "File is not a supported image (JPEG, PNG or WebP)."
             )
-        media_type, extension = SUPPORTED_FORMATS[image.format]
+        media_type, extension = SUPPORTED_FORMATS[image_format]
 
         # Check size from the header before any expensive pixel decoding.
         width, height = image.size
@@ -97,15 +99,17 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
         save_kwargs: dict[str, object] = {}
         if icc_profile:  # colour fidelity, not personal data
             save_kwargs["icc_profile"] = icc_profile
-        if image.format == "JPEG":
+        if image_format == "JPEG":
             if normalized.mode not in ("RGB", "L"):
                 normalized = normalized.convert("RGB")
             save_kwargs.update(quality=95)
-        elif image.format == "WEBP":
+        elif image_format == "WEBP":
             save_kwargs.update(quality=95)
         # No exif= argument and ImageOps clears the orientation tag: GPS, camera
-        # model, timestamps etc. are not carried into the stored file.
-        normalized.save(out, format=image.format, **save_kwargs)
+        # model, timestamps etc. are not carried into the stored file. The JPEG
+        # COM segment would otherwise be copied from info, so drop it too.
+        normalized.info.pop("comment", None)
+        normalized.save(out, format=image_format, **save_kwargs)
 
         return ProcessedImage(
             data=out.getvalue(),

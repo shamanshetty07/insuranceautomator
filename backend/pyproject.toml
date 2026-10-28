@@ -16,6 +16,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Local YOLO inference. AGPL-3.0 licensed; pulls in torch (~1.2 GB installed).
+# Verified on Python 3.14.2 / macOS arm64 with torch 2.15.0 (CPU).
+detection = [
+    "ultralytics==8.4.191",
+]
 dev = [
     "pytest>=8,<10",
     "httpx>=0.27,<1",

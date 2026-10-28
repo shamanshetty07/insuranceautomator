@@ -27,6 +27,8 @@ class Detection:
 class ModelInfo:
     name: str
     version: str
+    # Lowercase hex SHA-256 of the weights file, when the model loads one.
+    weights_sha256: str | None = None
 
 
 @dataclass(frozen=True)

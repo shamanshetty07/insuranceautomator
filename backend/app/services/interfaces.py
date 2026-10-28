@@ -1,10 +1,12 @@
-"""Extension points for AI services. Phase 1 defines contracts only; no implementations.
+"""Extension points for AI services. Implementations must run locally.
 
-Implementations (local YOLO / Qwen) arrive in later phases and must run locally.
+DamageDetectionService has a local Ultralytics implementation (app.services.detection);
+the others arrive in later phases.
 """
 
 from typing import Protocol
 
+from app.schemas.runs import DetectionConfig
 from app.services.types import (
     ClaimVerdict,
     Detection,
@@ -17,9 +19,14 @@ from app.services.types import (
 
 class DamageDetectionService(Protocol):
     model: ModelInfo
+    # The inference parameters actually applied; recorded on every DetectionRun.
+    config: DetectionConfig
 
     def detect(self, images: list[ImageRef]) -> list[Detection]:
-        """Return detections across the given images (possibly empty)."""
+        """Return detections across the given images (possibly empty).
+
+        Boxes follow app.schemas.damage.BoundingBox, relative to the stored image.
+        """
         ...
 
 

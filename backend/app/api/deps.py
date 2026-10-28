@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
+from app.services.detection import DetectorProvider, SettingsDetectorProvider
 from app.services.image_storage import ImageStorage
 
 DbSession = Annotated[Session, Depends(get_db)]
@@ -23,3 +24,10 @@ def get_storage(settings: AppSettings) -> ImageStorage:
 
 
 Storage = Annotated[ImageStorage, Depends(get_storage)]
+
+
+def get_detector_provider(settings: AppSettings) -> DetectorProvider:
+    return SettingsDetectorProvider(settings)
+
+
+Detector = Annotated[DetectorProvider, Depends(get_detector_provider)]

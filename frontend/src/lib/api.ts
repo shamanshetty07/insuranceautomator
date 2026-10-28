@@ -1,5 +1,7 @@
 import type {
   ApiFieldError,
+  DetectionRunList,
+  DetectorStatus,
   Inspection,
   InspectionCreate,
   InspectionImage,
@@ -70,6 +72,19 @@ export const deleteImage = (inspectionId: string, imageId: string) =>
   request<void>(`/inspections/${encodeURIComponent(inspectionId)}/images/${encodeURIComponent(imageId)}`, {
     method: "DELETE",
   });
+
+export const getDetectorStatus = () => request<DetectorStatus>("/detector");
+
+/** Runs detection synchronously; omit imageIds to run on every image of the inspection. */
+export const runDetection = (inspectionId: string, imageIds?: string[]) =>
+  request<DetectionRunList>(`/inspections/${encodeURIComponent(inspectionId)}/detections`, {
+    method: "POST",
+    body: JSON.stringify({ image_ids: imageIds ?? null }),
+  });
+
+/** latest=true: newest run per image; false: every run, newest first. */
+export const listDetections = (inspectionId: string, latest = true) =>
+  request<DetectionRunList>(`/inspections/${encodeURIComponent(inspectionId)}/detections?latest=${latest}`);
 
 /** Uploads one image with progress (fetch cannot report upload progress, XHR can). */
 export function uploadImage(
