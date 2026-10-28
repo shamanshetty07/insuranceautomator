@@ -15,7 +15,21 @@ def _response(status_code: int, code: str, message: str, details: list[FieldErro
     return JSONResponse(status_code=status_code, content=body.model_dump(exclude_none=True))
 
 
+class AppError(Exception):
+    """An expected, client-facing failure with a stable machine-readable code."""
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AppError)
+    async def app_error_handler(_: Request, exc: AppError):
+        return _response(exc.status_code, exc.code, exc.message)
+
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(_: Request, exc: StarletteHTTPException):
         code = {404: "not_found", 405: "method_not_allowed"}.get(exc.status_code, "http_error")

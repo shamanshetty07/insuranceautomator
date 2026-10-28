@@ -1,12 +1,12 @@
 # Vehicle Damage AI
 
-Vehicle damage assessment and insurance-report verification. **Phase 1 only**: project foundation, database schema, and inspection CRUD (create/list/get). No image upload, damage detection, report generation or verification exists yet.
+Vehicle damage assessment and insurance-report verification. **Current scope (Phase 2)**: inspections, image capture/upload with validation and local storage, and image management. No damage detection, report generation or verification exists yet.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/api-design.md](docs/api-design.md).
 
 ## Stack
 
-React 19 + TypeScript + Vite + Tailwind 4 · FastAPI + Pydantic 2 · SQLAlchemy 2 + Alembic · PostgreSQL (Docker Compose) · Pytest / Vitest. AI models (later phases) run locally.
+Pillow for image handling · React 19 + TypeScript + Vite + Tailwind 4 · FastAPI + Pydantic 2 · SQLAlchemy 2 + Alembic · PostgreSQL (Docker Compose) · Pytest / Vitest. AI models (later phases) run locally.
 
 ## Prerequisites (macOS)
 
@@ -54,6 +54,20 @@ cp .env.example .env
 npm run dev                   # http://localhost:5173
 ```
 
+## Image storage and maintenance
+
+Uploaded images are validated, orientation-normalized and saved under `storage/inspections/` (git-ignored) with server-generated names; see [docs/architecture.md](docs/architecture.md#image-storage-and-ingestion). Browser camera access needs `http://localhost` or HTTPS.
+
+Check that the database and the files agree (read-only, safe to run any time):
+
+```bash
+cd backend && source .venv/bin/activate
+python -m app.services.reconciliation          # human-readable
+python -m app.services.reconciliation --json   # machine-readable
+```
+
+It reports missing files, orphaned files, checksum mismatches and unsafe paths, and **never changes or deletes anything**. Exit code 1 means it found problems. To resolve one, inspect the listed relative path under `STORAGE_ROOT` yourself (an orphan can be removed by hand once you are sure it is not needed; a missing file means the row should be deleted through the API or restored from backup).
+
 ## Environment variables
 
 | File | Variable | Purpose |
@@ -62,8 +76,11 @@ npm run dev                   # http://localhost:5173
 | `backend/.env` | `DATABASE_URL` (required) | `postgresql+psycopg://user:pass@host:port/db` |
 | | `TEST_DATABASE_URL` | Disposable DB for pytest; **wiped on every run**; must differ from `DATABASE_URL` |
 | | `CORS_ORIGINS` | JSON list of allowed origins |
-| | `LOG_LEVEL`, `APP_ENV`, `STORAGE_ROOT` | Optional |
+| | `STORAGE_ROOT` | Image directory (default `../storage/inspections`) |
+| | `MAX_UPLOAD_BYTES`, `MAX_IMAGES_PER_INSPECTION`, `MIN_IMAGE_SIDE_PX`, `MAX_IMAGE_PIXELS` | Server-side upload limits |
+| | `LOG_LEVEL`, `APP_ENV` | Optional |
 | `frontend/.env` | `VITE_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
+| | `VITE_MAX_IMAGE_BYTES`, `VITE_MAX_IMAGES_PER_INSPECTION` | Client-side limits for fast feedback; keep equal to the backend values |
 
 ## Tests and checks
 

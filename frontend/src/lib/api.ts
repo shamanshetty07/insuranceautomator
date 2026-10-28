@@ -1,4 +1,11 @@
-import type { ApiFieldError, Inspection, InspectionCreate, InspectionList } from "../types/api";
+import type {
+  ApiFieldError,
+  Inspection,
+  InspectionCreate,
+  InspectionImage,
+  InspectionImageList,
+  InspectionList,
+} from "../types/api";
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -13,6 +20,24 @@ export class ApiError extends Error {
   }
 }
 
+export const apiUrl = (path: string) => `${BASE_URL}${path}`;
+
+function errorFromBody(status: number, text: string): ApiError {
+  let message = `Request failed (HTTP ${status}).`;
+  let details: ApiFieldError[] = [];
+  try {
+    const body = JSON.parse(text);
+    message = body.error?.message ?? message;
+    details = body.error?.details ?? [];
+  } catch {
+    // Non-JSON error body: keep the generic message.
+  }
+  return new ApiError(message, status, details);
+}
+
+const unreachable = () =>
+  new ApiError(`Cannot reach the API at ${BASE_URL}. Is the backend running?`, null);
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -21,21 +46,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { "Content-Type": "application/json", ...init?.headers },
     });
   } catch {
-    throw new ApiError(`Cannot reach the API at ${BASE_URL}. Is the backend running?`, null);
+    throw unreachable();
   }
 
-  if (!response.ok) {
-    let message = `Request failed (HTTP ${response.status}).`;
-    let details: ApiFieldError[] = [];
-    try {
-      const body = await response.json();
-      message = body.error?.message ?? message;
-      details = body.error?.details ?? [];
-    } catch {
-      // Non-JSON error body: keep the generic message.
-    }
-    throw new ApiError(message, response.status, details);
-  }
+  if (!response.ok) throw errorFromBody(response.status, await response.text());
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -47,3 +62,34 @@ export const getInspection = (id: string) =>
 
 export const createInspection = (payload: InspectionCreate) =>
   request<Inspection>("/inspections", { method: "POST", body: JSON.stringify(payload) });
+
+export const listImages = (inspectionId: string) =>
+  request<InspectionImageList>(`/inspections/${encodeURIComponent(inspectionId)}/images`);
+
+export const deleteImage = (inspectionId: string, imageId: string) =>
+  request<void>(`/inspections/${encodeURIComponent(inspectionId)}/images/${encodeURIComponent(imageId)}`, {
+    method: "DELETE",
+  });
+
+/** Uploads one image with progress (fetch cannot report upload progress, XHR can). */
+export function uploadImage(
+  inspectionId: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<InspectionImage> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE_URL}/api/v1/inspections/${encodeURIComponent(inspectionId)}/images`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve(JSON.parse(xhr.responseText) as InspectionImage)
+        : reject(errorFromBody(xhr.status, xhr.responseText));
+    xhr.onerror = () => reject(unreachable());
+    const form = new FormData();
+    form.append("file", file, file.name);
+    xhr.send(form);
+  });
+}

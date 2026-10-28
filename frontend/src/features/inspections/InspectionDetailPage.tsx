@@ -5,6 +5,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { ApiError, getInspection } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
 import { useAsync } from "../../lib/useAsync";
+import { ImagesSection } from "../images/ImagesSection";
 
 export function InspectionDetailPage() {
   const { inspectionId = "" } = useParams();
@@ -43,8 +44,9 @@ export function InspectionDetailPage() {
               <dd className="whitespace-pre-wrap">{state.data.notes ?? "No notes."}</dd>
             </div>
           </dl>
+          <ImagesSection inspectionId={state.data.id} />
           <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">
-            Images, damage detection, reports and verification will appear here in later phases.
+            Damage detection, reports and verification will appear here in later phases.
           </p>
         </>
       )}

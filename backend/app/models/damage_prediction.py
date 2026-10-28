@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.inspection_image import InspectionImage
+    from app.models.detection_run import DetectionRun
 
 
 class DamagePrediction(Base):
@@ -21,6 +21,8 @@ class DamagePrediction(Base):
     segmentation_data (nullable JSON): list of polygons, each a list of
         [x, y] points in the same normalized coordinates.
     Validation lives in app.schemas.damage; the DB stores the JSON as given.
+    The image, model name/version and parameters are not repeated here: they are
+    those of `detection_run`.
     """
 
     __tablename__ = "damage_predictions"
@@ -29,15 +31,13 @@ class DamagePrediction(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    inspection_image_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("inspection_images.id", ondelete="CASCADE"), index=True
+    detection_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("detection_runs.id", ondelete="CASCADE"), index=True
     )
     damage_type: Mapped[str] = mapped_column(String(100))
     confidence: Mapped[float] = mapped_column(Float)
     bounding_box: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     segmentation_data: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB)
-    model_name: Mapped[str] = mapped_column(String(100))
-    model_version: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    inspection_image: Mapped["InspectionImage"] = relationship(back_populates="damage_predictions")
+    detection_run: Mapped["DetectionRun"] = relationship(back_populates="predictions")

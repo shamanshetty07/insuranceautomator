@@ -32,3 +32,26 @@ export interface ApiFieldError {
   field: string;
   message: string;
 }
+
+export interface InspectionImage {
+  id: string;
+  inspection_id: string;
+  original_filename: string;
+  media_type: string;
+  file_size_bytes: number;
+  sha256: string | null;
+  /** Pixel size of the stored, EXIF-normalized image (the space bounding boxes refer to). */
+  width_px: number | null;
+  height_px: number | null;
+  /** Original EXIF orientation; metadata only, already applied to the stored pixels. */
+  exif_orientation: number | null;
+  image_order: number;
+  created_at: string;
+  /** Path relative to the API base URL; use apiUrl() to build the full URL. */
+  content_url: string;
+}
+
+export interface InspectionImageList {
+  items: InspectionImage[];
+  total: number;
+}
