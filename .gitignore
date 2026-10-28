@@ -1,0 +1,38 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# Model weights (never commit)
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.gguf
+*.ckpt
+*.bin
+models/weights/
+
+# Uploaded / generated images live under storage/ (ignored except the placeholder)
+storage/inspections/*
+!storage/inspections/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
