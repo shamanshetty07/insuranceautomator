@@ -1,0 +1,228 @@
+import dataclasses
+import itertools
+import re
+from pathlib import Path
+
+import pytest
+
+from app.schemas.claims import ClaimType, Verdict
+from app.services import claim_policy as cp
+from app.services.claim_policy import (
+    ClaimPolicyInput,
+    DetectionMatch,
+    EvidenceAssociation,
+    EvidenceIntegrity,
+    ReasonCode,
+    VerifierOutcome,
+    evaluate_claim,
+)
+
+VISUAL = {
+    ClaimType.VISIBLE_DAMAGE_PRESENCE,
+    ClaimType.DAMAGE_TYPE,
+    ClaimType.DAMAGE_LOCATION,
+}
+OK = EvidenceIntegrity.OK
+ASSOC = EvidenceAssociation.ASSOCIATED
+
+
+def make(ctype=ClaimType.VISIBLE_DAMAGE_PRESENCE, verdict=Verdict.SUPPORTED, integrity=OK,
+         association=ASSOC, det=DetectionMatch.MATCHES_CLAIM, errored=False, **kw):
+    return ClaimPolicyInput(ctype, VerifierOutcome(verdict, errored), integrity, association, det, **kw)
+
+
+ALL = list(
+    itertools.product(
+        list(ClaimType) + ["garbage", "", None],
+        [*Verdict, None],
+        EvidenceIntegrity,
+        EvidenceAssociation,
+        DetectionMatch,
+    )
+)
+
+
+@pytest.mark.parametrize("ctype,verdict,integ,assoc,det", ALL)
+def test_global_invariants(ctype, verdict, integ, assoc, det):
+    inp = make(ctype, verdict, integ, assoc, det)
+    d = evaluate_claim(inp)
+    assert isinstance(d.verdict, Verdict)
+    assert isinstance(d.needs_human_review, bool)
+    assert d.reason_codes and all(isinstance(r, ReasonCode) for r in d.reason_codes)
+    assert d.explanation
+    assert evaluate_claim(inp) == d
+    if d.verdict is Verdict.SUPPORTED:
+        assert integ is OK and assoc is ASSOC and ctype in VISUAL
+        assert verdict is Verdict.SUPPORTED and det is not DetectionMatch.CONFLICTS_WITH_CLAIM
+    if det is DetectionMatch.NO_DETECTION:
+        assert d.verdict is not Verdict.CONTRADICTED
+    if d.verdict is Verdict.CONTRADICTED:
+        assert integ is OK and assoc is ASSOC and ctype in VISUAL
+    if verdict is None:
+        assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+
+
+def test_inputs_frozen_and_not_mutated():
+    inp = make()
+    before = dataclasses.asdict(inp)
+    evaluate_claim(inp)
+    assert dataclasses.asdict(inp) == before
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        inp.integrity = EvidenceIntegrity.MISSING  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        evaluate_claim(inp).verdict = Verdict.SUPPORTED  # type: ignore[misc]
+
+
+def test_no_confidence_input():
+    assert not any("confidence" in f.name for f in dataclasses.fields(ClaimPolicyInput))
+
+
+@pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
+def test_supported_passthrough(ctype):
+    for det in (DetectionMatch.MATCHES_CLAIM, DetectionMatch.NOT_APPLICABLE):
+        d = evaluate_claim(make(ctype, det=det))
+        assert (d.verdict, d.needs_human_review) == (Verdict.SUPPORTED, False)
+
+
+def test_contradicted_passthrough():
+    for det in (DetectionMatch.CONFLICTS_WITH_CLAIM, DetectionMatch.NOT_APPLICABLE):
+        d = evaluate_claim(make(verdict=Verdict.CONTRADICTED, det=det))
+        assert (d.verdict, d.needs_human_review) == (Verdict.CONTRADICTED, False)
+
+
+def test_verifier_insufficient_passthrough():
+    d = evaluate_claim(make(verdict=Verdict.INSUFFICIENT_EVIDENCE))
+    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and not d.needs_human_review
+
+
+def assert_review(d, reason):
+    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+    assert reason in d.reason_codes
+
+
+@pytest.mark.parametrize("v", [Verdict.SUPPORTED, Verdict.CONTRADICTED])
+def test_inv1_no_detection_not_absence(v):
+    d = evaluate_claim(make(verdict=v, det=DetectionMatch.NO_DETECTION))
+    assert d.verdict is not Verdict.CONTRADICTED
+    if v is Verdict.CONTRADICTED:
+        assert_review(d, ReasonCode.NO_DETECTION_NOT_ABSENCE)
+    else:
+        assert d.needs_human_review
+
+
+def test_inv3_hidden():
+    assert_review(evaluate_claim(make(ClaimType.HIDDEN_STRUCTURAL_DAMAGE, human_confirmed=True)),
+                  ReasonCode.HIDDEN_DAMAGE_NOT_VISIBLE)
+
+
+@pytest.mark.parametrize("flag", [{}, {"has_validated_severity_policy": True}])
+def test_inv4_cost_requires_source(flag):
+    assert_review(evaluate_claim(make(ClaimType.REPAIR_COST, **flag)), ReasonCode.COST_NOT_VALIDATED)
+
+
+@pytest.mark.parametrize("flag", ["has_validated_cost_source", "human_confirmed"])
+def test_inv4_cost_allowed(flag):
+    d = evaluate_claim(make(ClaimType.REPAIR_COST, **{flag: True}))
+    assert d.verdict is Verdict.SUPPORTED
+
+
+def test_inv5_cause():
+    assert_review(evaluate_claim(make(ClaimType.DAMAGE_CAUSE, has_validated_cost_source=True)),
+                  ReasonCode.CAUSE_NOT_ASSERTABLE)
+    assert evaluate_claim(make(ClaimType.DAMAGE_CAUSE, human_confirmed=True)).verdict is Verdict.SUPPORTED
+
+
+@pytest.mark.parametrize("det", list(DetectionMatch))
+def test_inv6_severity_not_from_detection(det):
+    d = evaluate_claim(make(ClaimType.DAMAGE_SEVERITY, det=det))
+    assert_review(d, ReasonCode.SEVERITY_NOT_VALIDATED)
+
+
+def test_inv6_severity_validated_policy_allows_verifier():
+    d = evaluate_claim(make(ClaimType.DAMAGE_SEVERITY, has_validated_severity_policy=True))
+    assert d.verdict is Verdict.SUPPORTED
+    d = evaluate_claim(make(ClaimType.DAMAGE_SEVERITY, verdict=Verdict.INSUFFICIENT_EVIDENCE,
+                            has_validated_severity_policy=True))
+    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE
+
+
+@pytest.mark.parametrize("integ,reason", [
+    (EvidenceIntegrity.UNCHECKED, ReasonCode.INTEGRITY_UNCHECKED),
+    (EvidenceIntegrity.MISSING, ReasonCode.INTEGRITY_MISSING),
+    (EvidenceIntegrity.MISMATCHED, ReasonCode.INTEGRITY_MISMATCHED),
+    (EvidenceIntegrity.CORRUPT, ReasonCode.INTEGRITY_CORRUPT),
+])
+@pytest.mark.parametrize("v", [Verdict.SUPPORTED, Verdict.CONTRADICTED])
+def test_inv7_integrity(integ, reason, v):
+    assert_review(evaluate_claim(make(verdict=v, integrity=integ)), reason)
+
+
+@pytest.mark.parametrize("assoc,reason", [
+    (EvidenceAssociation.NONE_CITED, ReasonCode.NO_EVIDENCE_CITED),
+    (EvidenceAssociation.UNRESOLVED, ReasonCode.EVIDENCE_UNRESOLVED),
+])
+def test_association(assoc, reason):
+    assert_review(evaluate_claim(make(association=assoc)), reason)
+
+
+def test_inv8_verifier_missing_error_invalid():
+    assert_review(evaluate_claim(make(verdict=None)), ReasonCode.VERIFIER_MISSING)
+    assert_review(evaluate_claim(make(verdict=Verdict.SUPPORTED, errored=True)), ReasonCode.VERIFIER_ERROR)
+    assert_review(evaluate_claim(make(verdict="bogus")), ReasonCode.VERIFIER_INVALID)
+    assert evaluate_claim(make(verdict="supported")).verdict is Verdict.SUPPORTED
+
+
+@pytest.mark.parametrize("bad", ["garbage", "", "VISIBLE_DAMAGE_PRESENCE ", None, 5, object()])
+def test_inv9_unknown_claim_type(bad):
+    assert_review(evaluate_claim(make(bad)), ReasonCode.UNKNOWN_CLAIM_TYPE)
+
+
+def test_string_claim_type_coerced():
+    assert evaluate_claim(make("damage_type")).verdict is Verdict.SUPPORTED
+
+
+def test_inv10_one_decision_per_input():
+    assert all(isinstance(evaluate_claim(make(c)), cp.ClaimPolicyDecision) for c in ClaimType)
+
+
+def test_inv11_disagreement():
+    assert_review(evaluate_claim(make(det=DetectionMatch.CONFLICTS_WITH_CLAIM)),
+                  ReasonCode.DETECTION_CONFLICTS_WITH_SUPPORTED)
+    assert_review(evaluate_claim(make(verdict=Verdict.CONTRADICTED, det=DetectionMatch.MATCHES_CLAIM)),
+                  ReasonCode.DETECTION_MATCHES_CONTRADICTED)
+
+
+@pytest.mark.parametrize("ctype", [ClaimType.HIDDEN_STRUCTURAL_DAMAGE, ClaimType.REPAIR_COST,
+                                   ClaimType.DAMAGE_CAUSE, ClaimType.DAMAGE_SEVERITY,
+                                   ClaimType.REPAIR_RECOMMENDATION, ClaimType.OTHER])
+@pytest.mark.parametrize("v", list(Verdict))
+def test_inv12_policy_beats_verifier(ctype, v):
+    d = evaluate_claim(make(ctype, verdict=v))
+    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+
+
+def test_rule_order_type_before_integrity():
+    d = evaluate_claim(make(ClaimType.HIDDEN_STRUCTURAL_DAMAGE, integrity=EvidenceIntegrity.CORRUPT))
+    assert d.reason_codes == (ReasonCode.HIDDEN_DAMAGE_NOT_VISIBLE,)
+    d = evaluate_claim(make(integrity=EvidenceIntegrity.CORRUPT, association=EvidenceAssociation.UNRESOLVED,
+                            verdict=None))
+    assert d.reason_codes == (ReasonCode.EVIDENCE_UNRESOLVED,)  # association before integrity
+    d = evaluate_claim(make(integrity=EvidenceIntegrity.UNCHECKED, association=EvidenceAssociation.NONE_CITED,
+                            verdict=None))
+    assert d.reason_codes == (ReasonCode.NO_EVIDENCE_CITED,)
+    d = evaluate_claim(make(integrity=EvidenceIntegrity.CORRUPT, verdict=None))
+    assert d.reason_codes == (ReasonCode.INTEGRITY_CORRUPT,)
+    d = evaluate_claim(make(association=EvidenceAssociation.UNRESOLVED, verdict=None))
+    assert d.reason_codes == (ReasonCode.EVIDENCE_UNRESOLVED,)
+
+
+def test_reason_codes_stable_strings():
+    assert all(re.fullmatch(r"[a-z_]+", r.value) for r in ReasonCode)
+
+
+def test_module_is_pure_imports():
+    src = Path(cp.__file__).read_text()
+    imports = re.findall(r"^\s*(?:from|import)\s+([\w.]+)", src, re.M)
+    for banned in ("sqlalchemy", "torch", "ultralytics", "requests", "httpx", "logging", "os"):
+        assert not any(i == banned or i.startswith(banned + ".") for i in imports)
+    assert not any(i.startswith("app.models") or i.startswith("app.db") for i in imports)

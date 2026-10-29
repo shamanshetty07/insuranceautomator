@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     detector_image_size: int = Field(default=640, gt=0)
     detector_max_detections: int = Field(default=100, gt=0)
     detector_device: str | None = "cpu"
+    # Opt-in: sets ULTRALYTICS_SAFE_LOAD=1 before ultralytics is first imported, so
+    # checkpoints load with torch weights_only=True and an allow-list of known classes.
+    # Off by default because a given checkpoint must be confirmed to load under it.
+    detector_safe_load: bool = False
+    # A `running` detection run older than this is treated as abandoned by the recovery
+    # command. Runs are created per image just before inference, so this bounds the
+    # time for ONE image (plus waiting for the inference lock), not a whole request.
+    detector_stale_run_minutes: int = Field(default=30, gt=0)
 
 
 @lru_cache

@@ -6,6 +6,7 @@ the others arrive in later phases.
 
 from typing import Protocol
 
+from app.schemas.claims import StructuredReport
 from app.schemas.runs import DetectionConfig
 from app.services.types import (
     ClaimVerdict,
@@ -59,4 +60,14 @@ class ClaimVerificationService(Protocol):
 
     def find_omissions(self, report_text: str, evidence: EvidenceBundle) -> list[ClaimVerdict]:
         """Compare images to the report to find damage the report omits (label omitted_damage)."""
+        ...
+
+
+class StructuredReportGenerationService(Protocol):
+    """Generates a report and its atomic claims in one call (no separate extraction model)."""
+
+    model: ModelInfo
+
+    def generate_structured(self, evidence: EvidenceBundle) -> StructuredReport:
+        """Return the report text and the structured claims, citing only ids in the evidence."""
         ...

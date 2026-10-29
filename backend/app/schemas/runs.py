@@ -23,6 +23,26 @@ class DetectionConfig(_Strict):
     device: str | None = None
 
 
+class RuntimeVersions(_Strict):
+    """Installed package versions recorded on a run (name -> version; None if unknown).
+
+    Written only by the server (detection_service); never part of DetectionConfig, so a
+    client-supplied DetectionConfig cannot carry or forge it.
+    """
+
+    ultralytics: str | None = None
+    torch: str | None = None
+
+
+class StoredDetectionConfig(DetectionConfig):
+    """What a DetectionRun stores: the inference parameters plus server-recorded runtime.
+
+    `runtime` is optional so rows written before it existed still validate.
+    """
+
+    runtime: RuntimeVersions | None = None
+
+
 class SamplingParams(_Strict):
     temperature: float = Field(ge=0)
     top_p: float = Field(gt=0, le=1)
@@ -46,3 +66,4 @@ class GenerationConfig(_Strict):
 class VerificationConfig(_Strict):
     prompt_version: str = Field(min_length=1)
     sampling: SamplingParams
+    policy_version: str | None = None  # claim_policy.POLICY_VERSION; set by the verification service

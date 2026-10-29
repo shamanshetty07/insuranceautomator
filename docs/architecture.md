@@ -151,3 +151,43 @@ Only `created` is assigned in Phase 1; no transitions are implemented and the AP
 ## Frontend layout (`frontend/src`)
 
 `components/` shared UI, `features/<area>/` feature code (only `inspections/` exists yet; `images`, `damage`, `reports`, `verification` are added as those phases arrive), `lib/` API client and helpers, `types/` API types.
+
+## Claim contracts and evidence policy (Sprint 1; no inference yet)
+
+Typed contracts exist for the planned report-verification phase; no report generation, Qwen inference or verification endpoint is implemented.
+
+- `app/schemas/claims.py`: `ClaimType`, `Verdict` (`supported`, `contradicted`, `insufficient_evidence`), `EvidenceReference`, `ExtractedClaim`, `ClaimExtractionResult`. All strict (`extra="forbid"`) and frozen. A `Verdict` never encodes human-review routing. An empty claims list means "nothing extracted", never "no problems". Report text stays in `GeneratedReport.content`.
+- `app/services/claim_policy.py`: pure `evaluate_claim()` returning a verdict, a separate `needs_human_review` flag, and a stable `ReasonCode`. First matching rule wins (order in the module docstring). It fails closed: unknown claim types, missing or unchecked evidence, an absent verifier verdict, and hidden-damage, cost, cause and unvalidated-severity claims all yield `insufficient_evidence` with review. Detector confidence is deliberately not an input, and a missing detection never establishes absence. Disagreement between verifier and detection match is never promoted to `supported`.
+- Not yet connected to any database table: `VerificationResult` still has the older seven-value `VerificationLabel`; mapping to the three verdicts needs a later migration.
+
+**Detection run metadata.** `DetectionRun.config` now also stores `runtime: {ultralytics, torch}` versions, read from package metadata (never by importing the packages). Server-written only; older rows without it remain valid.
+
+**Stale runs.** Runs left `running` by a hard crash are cleared by `python -m app.services.detection.recovery` (age threshold `DETECTOR_STALE_RUN_MINUTES`, default 30). Age is the only signal, so with several workers a still-active run older than the threshold would also be failed.
+
+**Restricted checkpoint loading.** `DETECTOR_SAFE_LOAD=true` (default off) sets `ULTRALYTICS_SAFE_LOAD=1` before the first Ultralytics import. Read from the installed 8.4.191 source; needs torch >= 2.6 and has not been tried with a real damage checkpoint.
+
+## Claim-level verification (Sprint 2; model-independent)
+
+Implemented and tested with development stubs only. No Qwen or other model is wired in, and there are no HTTP endpoints.
+
+**Schema (migration 0004).** `verification_results` keeps every existing column and adds `claim_id`, `claim_type`, `verdict` (`supported` / `contradicted` / `insufficient_evidence`), `needs_human_review` (routing, never part of the verdict) and `policy_reason_codes`. `verification_label` is now nullable and holds the **raw verifier label**; `verdict` is the **final policy outcome**. `evidence_reference` holds an `EvidenceRecord` (association, integrity, detection match, resolved ids, crops, problem codes). `(verification_run_id, claim_id)` is unique when `claim_id` is set; a partial index serves the review queue. The CHECK value lists are frozen in the migration, and a test fails if they drift from the Python enums.
+
+**Legacy label -> verdict** (backfill and `app.services.verdict_mapping.legacy_verdict`, kept in agreement by a test):
+
+| Legacy label | Verdict |
+|---|---|
+| `supported` | `supported` |
+| `contradicted`, `wrong_location`, `wrong_damage_type` | `contradicted` |
+| `unverifiable` | `insufficient_evidence` |
+| `unsupported_severity` | none (ambiguous: overstated vs. not established) |
+| `omitted_damage` | none (a coverage finding, not a verdict on a report claim; a CHECK forbids giving it one) |
+
+Downgrade is lossy: new columns are dropped and NULL labels become `unverifiable`.
+
+**Evidence association** (`services/evidence_association.py`) is read-only and returns exactly one result per claim. A bad reference makes the claim `unresolved` with a problem code; it never drops or reorders claims. Cross-inspection images and predictions are treated as unknown. Integrity checks file presence, checksum, decodability and stored dimensions. `detection_match` is a signal only: `matches_claim` means the claim cites a real detection on the cited image (citation consistency, not a class or region comparison), `no_detection` needs every cited image to have a completed run with zero predictions, and `conflicts_with_claim` is never produced yet.
+
+**Orchestration** (`services/verification_service.py::verify_report`). The run is committed as `running`, evidence is read and that transaction ended, the verifier is called with no transaction open, and results are written in one short transaction. The verifier sees only the claim text and the cited original images, never the report or detection boxes, and is not called when the policy already decides the claim. A verifier exception fails that claim only; the run is `failed` only if every verifier call failed. Interruption marks the run `failed` and re-raises. Association is checked before integrity in the policy so the reason code names the real cause.
+
+**Stubs** (`services/dev_stubs.py`) are deterministic test doubles, not AI. Model names start with `stub-`.
+
+**Not yet done:** report persistence from structured output, the reconciled report, a human-review table, endpoints, a semantic detection comparison, and the raw verifier's own `evidence_reference` (discarded).

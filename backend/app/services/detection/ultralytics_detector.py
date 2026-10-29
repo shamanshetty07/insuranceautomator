@@ -9,8 +9,10 @@ disables its usage telemetry, weight auto-downloads and pip auto-installs.
 """
 
 import hashlib
+import logging
 import math
 import os
+import sys
 import threading
 import uuid
 from collections.abc import Mapping, Sequence
@@ -21,6 +23,8 @@ from PIL import Image
 
 from app.schemas.runs import DetectionConfig
 from app.services.types import Detection, ImageRef, ModelInfo
+
+logger = logging.getLogger(__name__)
 
 # Ultralytics models keep mutable predictor state and are not safe to call from
 # several threads at once; FastAPI runs sync routes in a thread pool.
@@ -61,6 +65,24 @@ def _import_yolo() -> Any:
     from ultralytics import YOLO  # noqa: PLC0415 - optional dependency, imported on demand
 
     return YOLO
+
+
+def apply_safe_load(enabled: bool) -> None:
+    """Opt in to Ultralytics' restricted checkpoint loading (weights_only + allow-list).
+
+    Verified in ultralytics 8.4.191 (utils/__init__.py:81): ULTRALYTICS_SAFE_LOAD is read
+    once, at import of `ultralytics.utils`, so it only takes effect if set before the
+    first import. It needs torch >= 2.6 (otherwise Ultralytics silently falls back to a
+    standard load). When disabled this leaves the environment untouched.
+    """
+    if not enabled:
+        return
+    if "ultralytics.utils" in sys.modules and os.environ.get("ULTRALYTICS_SAFE_LOAD") != "1":
+        logger.warning(
+            "detector_safe_load is set but ultralytics was already imported; it has no effect "
+            "until the process restarts with ULTRALYTICS_SAFE_LOAD=1 in the environment."
+        )
+    os.environ["ULTRALYTICS_SAFE_LOAD"] = "1"
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -125,12 +147,14 @@ class UltralyticsDetector:
     """DamageDetectionService backed by a local YOLO detection weights file."""
 
     def __init__(
-        self, weights_path: Path, model_name: str, model_version: str, config: DetectionConfig
+        self, weights_path: Path, model_name: str, model_version: str, config: DetectionConfig,
+        *, safe_load: bool = False,
     ) -> None:
         if not is_weights_file(weights_path):
             # Checked before loading: given a missing path, Ultralytics would try to download it.
             raise FileNotFoundError("weights file is missing, not a regular file, or not a .pt file")
         weights_sha256 = file_sha256(weights_path)
+        apply_safe_load(safe_load)
         model = _import_yolo()(str(weights_path), task="detect")
         names: dict[int, str] = {int(k): str(v) for k, v in model.names.items()}
         too_long = [n for n in names.values() if len(n) > _MAX_CLASS_NAME_LENGTH]

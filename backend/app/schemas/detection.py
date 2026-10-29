@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.models.run_status import RunStatus
 from app.schemas.damage import BoundingBox
-from app.schemas.runs import DetectionConfig
+from app.schemas.runs import DetectionConfig, StoredDetectionConfig
 
 
 class DetectorStatusRead(BaseModel):
@@ -48,7 +48,7 @@ class DetectionRunRead(BaseModel):
     model_name: str
     model_version: str
     weights_sha256: str | None
-    config: DetectionConfig
+    config: StoredDetectionConfig
     status: RunStatus
     error_message: str | None
     created_at: datetime

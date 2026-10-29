@@ -324,7 +324,7 @@ None found.
 
 **P2-I-4. Ultralytics' opt-in restricted loading is not enabled.**
 
-**Status: Open (deferred by the lead).** Enabling it cannot be verified until real weights are approved and loaded once.
+**Status: Partially mitigated (Sprint 1), opt-in only.** `DETECTOR_SAFE_LOAD=true` sets `ULTRALYTICS_SAFE_LOAD=1` before the first import (checked in the 8.4.191 source; requires torch >= 2.6). It is off by default and has not been tried with a real damage checkpoint, so it is not yet the default. Still open: confirm the approved checkpoint loads under it, then flip the default; add an expected-sha256 pin.
 - Where: `ultralytics_detector.py:40-45`.
 - Evidence: by default, 8.4.191 loads checkpoints with `torch.load(weights_only=False)`
   (`utils/patches.py` `torch_load`), which unpickles the whole file. The release offers
@@ -339,6 +339,8 @@ None found.
 ### Optional
 
 **P2-O-1. No reaper for runs left in `running`.**
+
+**Status: Mostly fixed (Sprint 1).** BaseException and a failed final commit now leave a `failed` run where possible, and `python -m app.services.detection.recovery` fails runs older than `DETECTOR_STALE_RUN_MINUTES`. Age is the only signal, so with several workers a still-active run past the threshold would also be failed. The DB-backed tests for this could not run (no `TEST_DATABASE_URL`).
 - Where: `detection_service.py:136-149`.
 - A crash, a kill, or a `BaseException` such as worker cancellation during inference leaves a run
   `running` forever.

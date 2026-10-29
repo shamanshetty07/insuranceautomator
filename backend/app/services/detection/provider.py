@@ -55,7 +55,7 @@ class SettingsDetectorProvider:
     def _key(self) -> tuple[object, ...]:
         s = self._settings
         path = s.detector_weights_path.resolve() if s.detector_weights_path else None
-        return (path, s.detector_model_name, s.detector_model_version, self._config.model_dump_json())
+        return (path, s.detector_model_name, s.detector_model_version, self._config.model_dump_json(), s.detector_safe_load)
 
     def _unavailable_reason(self) -> str | None:
         s = self._settings
@@ -97,7 +97,8 @@ class SettingsDetectorProvider:
             if detector is None:
                 try:
                     detector = UltralyticsDetector(
-                        s.detector_weights_path, s.detector_model_name, s.detector_model_version, self._config
+                        s.detector_weights_path, s.detector_model_name, s.detector_model_version, self._config,
+                        safe_load=s.detector_safe_load,
                     )
                 except Exception:
                     logger.exception("Failed to load the detection model")

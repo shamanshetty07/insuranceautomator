@@ -114,7 +114,9 @@ def test_happy_path_persists_runs_and_predictions(client, db_session, use_detect
     db_session.expire_all()
     stored = db_session.scalars(select(DetectionRun).order_by(DetectionRun.created_at)).all()
     assert [r.status for r in stored] == [RunStatus.COMPLETED, RunStatus.COMPLETED]
-    assert stored[0].config == CONFIG.model_dump(mode="json")
+    stored_config = dict(stored[0].config)
+    assert set(stored_config.pop("runtime")) == {"ultralytics", "torch"}  # server-recorded versions
+    assert stored_config == CONFIG.model_dump(mode="json")
     preds = db_session.scalars(select(DamagePrediction)).all()
     assert {p.damage_type for p in preds} == {"dent", "scratch"}
     assert all(p.detection_run_id == stored[0].id for p in preds)

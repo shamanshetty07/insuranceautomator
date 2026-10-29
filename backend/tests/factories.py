@@ -54,8 +54,12 @@ def make_vrun(report: GeneratedReport, version: str = "1") -> VerificationRun:
 
 
 def make_result(
-    run: VerificationRun, claim: str = "claim", label: VerificationLabel = VerificationLabel.SUPPORTED
+    run: VerificationRun,
+    claim: str = "claim",
+    label: VerificationLabel | None = VerificationLabel.SUPPORTED,
+    **kw,
 ) -> VerificationResult:
+    """Extra keyword args (claim_id, claim_type, verdict, ...) pass through to the model."""
     return VerificationResult(
-        verification_run=run, claim_text=claim, verification_label=label, explanation="e"
+        verification_run=run, claim_text=claim, verification_label=label, explanation="e", **kw
     )
