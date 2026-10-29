@@ -24,6 +24,12 @@ VISUAL = {
 }
 OK = EvidenceIntegrity.OK
 ASSOC = EvidenceAssociation.ASSOCIATED
+UNCORROBORATED = {
+    DetectionMatch.NO_DETECTION,
+    DetectionMatch.INCONCLUSIVE,
+    DetectionMatch.UNAVAILABLE,
+    DetectionMatch.NOT_APPLICABLE,
+}
 
 
 def make(ctype=ClaimType.VISIBLE_DAMAGE_PRESENCE, verdict=Verdict.SUPPORTED, integrity=OK,
@@ -60,6 +66,14 @@ def test_global_invariants(ctype, verdict, integ, assoc, det):
         assert integ is OK and assoc is ASSOC and ctype in VISUAL
     if verdict is None:
         assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+    # A visual verdict without review needs corroborating detection; missing, failed or
+    # incomparable detection never gets less scrutiny than "nothing detected".
+    if d.verdict is Verdict.SUPPORTED and not d.needs_human_review:
+        assert det is DetectionMatch.MATCHES_CLAIM
+    if d.verdict is Verdict.CONTRADICTED and not d.needs_human_review:
+        assert det is DetectionMatch.CONFLICTS_WITH_CLAIM
+    if d.verdict is not Verdict.INSUFFICIENT_EVIDENCE and det in UNCORROBORATED:
+        assert d.needs_human_review
 
 
 def test_inputs_frozen_and_not_mutated():
@@ -79,15 +93,59 @@ def test_no_confidence_input():
 
 @pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
 def test_supported_passthrough(ctype):
-    for det in (DetectionMatch.MATCHES_CLAIM, DetectionMatch.NOT_APPLICABLE):
-        d = evaluate_claim(make(ctype, det=det))
-        assert (d.verdict, d.needs_human_review) == (Verdict.SUPPORTED, False)
+    d = evaluate_claim(make(ctype, det=DetectionMatch.MATCHES_CLAIM))
+    assert (d.verdict, d.needs_human_review, d.reason_codes) == (
+        Verdict.SUPPORTED, False, (ReasonCode.VERIFIER_SUPPORTED,))
 
 
 def test_contradicted_passthrough():
-    for det in (DetectionMatch.CONFLICTS_WITH_CLAIM, DetectionMatch.NOT_APPLICABLE):
-        d = evaluate_claim(make(verdict=Verdict.CONTRADICTED, det=det))
-        assert (d.verdict, d.needs_human_review) == (Verdict.CONTRADICTED, False)
+    d = evaluate_claim(make(verdict=Verdict.CONTRADICTED, det=DetectionMatch.CONFLICTS_WITH_CLAIM))
+    assert (d.verdict, d.needs_human_review) == (Verdict.CONTRADICTED, False)
+
+
+@pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
+@pytest.mark.parametrize("v", [Verdict.SUPPORTED, Verdict.CONTRADICTED])
+@pytest.mark.parametrize("det,reason", [
+    (DetectionMatch.UNAVAILABLE, ReasonCode.DETECTION_UNAVAILABLE),  # never run / failed / running
+    (DetectionMatch.INCONCLUSIVE, ReasonCode.DETECTION_INCONCLUSIVE),  # not comparable
+    (DetectionMatch.NOT_APPLICABLE, ReasonCode.DETECTION_INCONCLUSIVE),  # defensive: visual claim
+])
+def test_uncorroborated_visual_claim_keeps_verifier_verdict_but_needs_review(ctype, v, det, reason):
+    d = evaluate_claim(make(ctype, verdict=v, det=det))
+    assert (d.verdict, d.needs_human_review, d.reason_codes) == (v, True, (reason,))
+
+
+@pytest.mark.parametrize("det", [DetectionMatch.UNAVAILABLE, DetectionMatch.INCONCLUSIVE])
+def test_missing_detection_never_less_scrutiny_than_zero_detections(det):
+    zero = evaluate_claim(make(det=DetectionMatch.NO_DETECTION))
+    missing = evaluate_claim(make(det=det))
+    assert zero.needs_human_review and missing.needs_human_review
+    assert missing.verdict is zero.verdict is Verdict.SUPPORTED
+
+
+def test_non_visual_claim_cleared_by_its_gate_is_not_reviewed_for_detection():
+    d = evaluate_claim(make(ClaimType.DAMAGE_SEVERITY, det=DetectionMatch.NOT_APPLICABLE,
+                            has_validated_severity_policy=True))
+    assert (d.verdict, d.needs_human_review) == (Verdict.SUPPORTED, False)
+
+
+@pytest.mark.parametrize("flags", [
+    {"has_validated_cost_source": True},
+    {"has_validated_severity_policy": True},
+    {"human_confirmed": True},
+    {"has_validated_cost_source": True, "has_validated_severity_policy": True, "human_confirmed": True},
+])
+@pytest.mark.parametrize("ctype", list(ClaimType))
+@pytest.mark.parametrize("det", list(DetectionMatch))
+def test_gates_never_bypass_hidden_damage_or_evidence_checks(flags, ctype, det):
+    d = evaluate_claim(make(ctype, det=det, integrity=EvidenceIntegrity.MISMATCHED, **flags))
+    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+    d = evaluate_claim(make(ClaimType.HIDDEN_STRUCTURAL_DAMAGE, det=det, **flags))
+    assert d.reason_codes == (ReasonCode.HIDDEN_DAMAGE_NOT_VISIBLE,)
+
+
+def test_policy_version_bumped_for_review_routing_change():
+    assert cp.POLICY_VERSION == "claim-policy-2"
 
 
 def test_verifier_insufficient_passthrough():

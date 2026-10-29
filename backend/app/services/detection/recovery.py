@@ -1,9 +1,11 @@
 """Fail detection runs abandoned in `running` (crash, kill, lost commit).
 
 Run:  python -m app.services.detection.recovery
-Uses DETECTOR_STALE_RUN_MINUTES (default 30). Not run at app startup: startup must not
-need the database, and with several workers a restarting worker would judge runs that
-are active elsewhere. See detection_service.fail_stale_runs for the age-only limitation.
+MANUAL ONLY: nothing schedules it and it does not run at app startup (startup must not
+need the database). Safe to run at any time, from any machine, and concurrently with
+workers and with other recovery processes: a run is failed only if its worker has sent
+no heartbeat for DETECTOR_STALE_RUN_MINUTES (default 30), with one conditional UPDATE
+(see detection_service.fail_stale_runs). Running it twice changes nothing more.
 """
 
 import sys
@@ -18,7 +20,7 @@ def main() -> int:
     minutes = get_settings().detector_stale_run_minutes
     with get_session_factory()() as db:
         count = fail_stale_runs(db, timedelta(minutes=minutes))
-    print(f"Marked {count} stale running detection run(s) as failed (older than {minutes} min).")
+    print(f"Marked {count} detection run(s) with no heartbeat for {minutes} min as failed.")
     return 0
 
 

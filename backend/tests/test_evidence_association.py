@@ -86,7 +86,7 @@ def test_valid_refs_ok_and_matches(world):
     assert r.image_paths[0][0] == img.id and r.image_paths[0][1].is_file()
     rec = r.to_record()
     assert EvidenceRecord.model_validate(rec.model_dump(mode="json")) == rec
-    assert rec.image_ids == [img.id]
+    assert rec.image_ids == (img.id,)
 
 
 def test_no_refs(world):
@@ -226,7 +226,7 @@ def test_check_integrity_false(world):
     assert r.association is A.ASSOCIATED and r.integrity is I.UNCHECKED and r.problems == ()
 
 
-def test_detection_no_detection_and_not_applicable(world):
+def test_detection_no_detection_unavailable_and_inconclusive(world):
     db, storage, insp, _ = world
     zero = add_image(db, storage, insp, 0)
     add_run(db, zero, preds=0)
@@ -238,12 +238,14 @@ def test_detection_no_detection_and_not_applicable(world):
     has = add_image(db, storage, insp, 4)
     add_run(db, has, preds=1)
     assert one(world, claim(images=[zero.id])).detection_match is D.NO_DETECTION
-    assert one(world, claim(images=[never.id])).detection_match is D.NOT_APPLICABLE
-    assert one(world, claim(images=[failed.id])).detection_match is D.NOT_APPLICABLE
-    assert one(world, claim(images=[running.id])).detection_match is D.NOT_APPLICABLE
-    assert one(world, claim(images=[zero.id, never.id])).detection_match is D.NOT_APPLICABLE
+    # no completed run: unavailable (reviewed), never "nothing detected" and never skipped
+    assert one(world, claim(images=[never.id])).detection_match is D.UNAVAILABLE
+    assert one(world, claim(images=[failed.id])).detection_match is D.UNAVAILABLE
+    assert one(world, claim(images=[running.id])).detection_match is D.UNAVAILABLE
+    assert one(world, claim(images=[zero.id, never.id])).detection_match is D.UNAVAILABLE
     # image has predictions the claim did not cite -> cannot tell
-    assert one(world, claim(images=[has.id])).detection_match is D.NOT_APPLICABLE
+    r = one(world, claim(images=[has.id]))
+    assert r.detection_match is D.INCONCLUSIVE and r.detection_details == (f"uncited_detections:{has.id}",)
 
 
 def test_latest_completed_run_wins_over_failed_and_older(world):
@@ -273,7 +275,7 @@ def test_non_visual_types_not_applicable(world, ctype):
     assert r.association is A.ASSOCIATED and r.detection_match is D.NOT_APPLICABLE
 
 
-def test_never_conflicts_and_mixed_batch_order_and_readonly(world):
+def test_mixed_batch_order_and_readonly(world):
     db, storage, insp, other = world
     good = add_image(db, storage, insp, 0)
     foreign = add_image(db, storage, other, 0)
@@ -292,7 +294,6 @@ def test_never_conflicts_and_mixed_batch_order_and_readonly(world):
     db.commit()  # settle test setup so only association's own effects are visible
     res = associate_claims(db, storage, insp.id, claims)
     assert [r.claim_id for r in res] == [c.claim_id for c in claims]
-    assert all(r.detection_match is not D.CONFLICTS_WITH_CLAIM for r in res)
     assert not db.new and not db.dirty and not db.deleted
     for r in res:
         EvidenceRecord.model_validate(r.to_record().model_dump(mode="json"))
@@ -310,3 +311,50 @@ def test_to_record_truncates_problems():
                           tuple(f"p{i}" for i in range(80)))
     rec = ev.to_record()
     assert len(rec.problems) == 50 and rec.problems[-1] == "problems_truncated"
+
+
+BOX = {"x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
+FAR = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}
+
+
+def test_damage_type_compared_with_the_stored_prediction(world):
+    db, storage, insp, _ = world
+    img = add_image(db, storage, insp)
+    _, (p,) = add_run(db, img, preds=1)  # stored class "dent"
+
+    def typed(cid, damage_type):
+        return ExtractedClaim(claim_id=cid, text="t", claim_type=ClaimType.DAMAGE_TYPE,
+                              damage_type=damage_type, image_ids=[img.id], prediction_ids=[p.id])
+
+    res = associate_claims(db, storage, insp.id, [typed("a", "Dent"), typed("b", "scratch"), typed("c", None)])
+    assert [r.detection_match for r in res] == [D.MATCHES_CLAIM, D.CONFLICTS_WITH_CLAIM, D.INCONCLUSIVE]
+    assert res[1].to_record().detection_details[0] == f"damage_type_mismatch:{p.id}"
+
+
+def test_location_compared_with_the_stored_box(world):
+    db, storage, insp, _ = world
+    img = add_image(db, storage, insp)
+    _, (p,) = add_run(db, img, preds=1)
+    p.bounding_box = BOX
+    db.flush()
+
+    def located(cid, crop):
+        return ExtractedClaim(
+            claim_id=cid, text="t", claim_type=ClaimType.DAMAGE_LOCATION, image_ids=[img.id],
+            prediction_ids=[p.id], evidence=[{"image_id": str(img.id), "prediction_id": str(p.id), "crop": crop}],
+        )
+
+    res = associate_claims(db, storage, insp.id, [located("a", BOX), located("b", FAR)])
+    assert [r.detection_match for r in res] == [D.MATCHES_CLAIM, D.CONFLICTS_WITH_CLAIM]
+
+
+def test_cited_prediction_from_a_superseded_run_is_inconclusive(world):
+    db, storage, insp, _ = world
+    img = add_image(db, storage, insp)
+    old, (p,) = add_run(db, img, preds=1)
+    old.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    new, _ = add_run(db, img, preds=1)
+    new.created_at = datetime(2021, 1, 1, tzinfo=timezone.utc)
+    db.flush()
+    r = one(world, claim(ctype=ClaimType.VISIBLE_DAMAGE_PRESENCE, images=[img.id], preds=[p.id]))
+    assert r.detection_match is D.INCONCLUSIVE and r.detection_details == (f"prediction_not_latest:{p.id}",)

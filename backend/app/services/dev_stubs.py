@@ -52,12 +52,13 @@ class StubStructuredReportGenerator:
         index = {iid: n + 1 for n, iid in enumerate(image_ids)}
         claims: list[ExtractedClaim] = []
 
-        def add(text, ctype, ids, evidence_refs=(), preds=()):
+        def add(text, ctype, ids, evidence_refs=(), preds=(), damage_type=None):
             claims.append(
                 ExtractedClaim(
                     claim_id=f"c{len(claims) + 1}",
                     text=text,
                     claim_type=ctype,
+                    damage_type=damage_type,
                     image_ids=list(ids),
                     prediction_ids=list(preds),
                     evidence=list(evidence_refs),
@@ -91,6 +92,7 @@ class StubStructuredReportGenerator:
                 [det.image_id],
                 [EvidenceReference(image_id=det.image_id, prediction_id=pid, crop=crop)],
                 [pid] if pid else [],
+                damage_type=det.damage_type,
             )
         if self.include_unverifiable_claims:
             first = image_ids[0]

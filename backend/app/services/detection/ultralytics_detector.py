@@ -9,10 +9,11 @@ disables its usage telemetry, weight auto-downloads and pip auto-installs.
 """
 
 import hashlib
+import hmac
+import importlib
 import logging
 import math
 import os
-import sys
 import threading
 import uuid
 from collections.abc import Mapping, Sequence
@@ -67,22 +68,72 @@ def _import_yolo() -> Any:
     return YOLO
 
 
-def apply_safe_load(enabled: bool) -> None:
-    """Opt in to Ultralytics' restricted checkpoint loading (weights_only + allow-list).
+class UnsafeLoadRefused(RuntimeError):
+    """A configured checkpoint safeguard could not be guaranteed, so nothing was loaded."""
 
-    Verified in ultralytics 8.4.191 (utils/__init__.py:81): ULTRALYTICS_SAFE_LOAD is read
-    once, at import of `ultralytics.utils`, so it only takes effect if set before the
-    first import. It needs torch >= 2.6 (otherwise Ultralytics silently falls back to a
-    standard load). When disabled this leaves the environment untouched.
+
+def verify_weights_digest(actual: str, expected: str | None) -> None:
+    """Refuse weights whose SHA-256 differs from the configured pin (checked before loading).
+
+    Without a pin any .pt file is accepted, as before; that is logged so it is visible.
+    The file is read again by the loader after hashing (time-of-check gap, P2-O-4), so
+    the pin protects against a wrong or swapped file, not a concurrent local writer.
     """
-    if not enabled:
+    if expected is None:
+        logger.warning("No DETECTOR_WEIGHTS_SHA256 pin configured; loading unpinned weights sha256=%s", actual)
         return
-    if "ultralytics.utils" in sys.modules and os.environ.get("ULTRALYTICS_SAFE_LOAD") != "1":
-        logger.warning(
-            "detector_safe_load is set but ultralytics was already imported; it has no effect "
-            "until the process restarts with ULTRALYTICS_SAFE_LOAD=1 in the environment."
+    if not hmac.compare_digest(actual, expected):
+        raise UnsafeLoadRefused("the weights file does not match DETECTOR_WEIGHTS_SHA256")
+
+
+def apply_safe_load(enabled: bool) -> None:
+    """Request Ultralytics' restricted checkpoint loading (weights_only + class allow-list).
+
+    Only a request: Ultralytics reads ULTRALYTICS_SAFE_LOAD once, when `ultralytics.utils`
+    is first imported (8.4.191: utils/__init__.py:81, copied into nn/tasks.py at import).
+    `confirm_safe_load_active` must check after the import whether it took effect.
+    When disabled this leaves the environment untouched.
+    """
+    if enabled:
+        os.environ["ULTRALYTICS_SAFE_LOAD"] = "1"
+
+
+def confirm_safe_load_active() -> None:
+    """Raise UnsafeLoadRefused unless the next checkpoint load really is restricted.
+
+    Reads Ultralytics' own resolved state, not the environment variable (verified
+    against the 8.4.191 source; any other layout fails closed):
+    - ultralytics.nn.tasks.SAFE_LOAD is True: False if Ultralytics was imported before
+      the flag was set, in this process, by anything.
+    - ultralytics.nn.tasks._SafeLoad.SUPPORTED is True: False on torch < 2.6, where
+      torch_safe_load silently degrades to an unrestricted torch.load.
+    """
+    try:
+        tasks = importlib.import_module("ultralytics.nn.tasks")
+    except Exception as exc:
+        raise UnsafeLoadRefused("cannot inspect Ultralytics' checkpoint loader") from exc
+    if getattr(tasks, "SAFE_LOAD", None) is not True:
+        raise UnsafeLoadRefused(
+            "restricted loading is not active: Ultralytics was imported before it was "
+            "requested; restart the process with DETECTOR_SAFE_LOAD=true"
         )
-    os.environ["ULTRALYTICS_SAFE_LOAD"] = "1"
+    if getattr(getattr(tasks, "_SafeLoad", None), "SUPPORTED", None) is not True:
+        raise UnsafeLoadRefused("restricted loading is not supported here (Ultralytics needs torch >= 2.6)")
+
+
+def model_stride(model: Any) -> int | None:
+    """Largest stride of a loaded YOLO model (model.model.stride), or None if unknown."""
+    try:
+        raw = model.model.stride
+        values = raw if isinstance(raw, int | float) else _as_list(raw)
+    except Exception:
+        return None
+    flat = values if isinstance(values, list) else [values]
+    try:
+        strides = [int(v) for v in flat]
+    except (TypeError, ValueError):
+        return None
+    return max(strides) if strides else None
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -148,14 +199,23 @@ class UltralyticsDetector:
 
     def __init__(
         self, weights_path: Path, model_name: str, model_version: str, config: DetectionConfig,
-        *, safe_load: bool = False,
+        *, safe_load: bool = False, expected_sha256: str | None = None,
     ) -> None:
         if not is_weights_file(weights_path):
             # Checked before loading: given a missing path, Ultralytics would try to download it.
             raise FileNotFoundError("weights file is missing, not a regular file, or not a .pt file")
         weights_sha256 = file_sha256(weights_path)
+        verify_weights_digest(weights_sha256, expected_sha256)
         apply_safe_load(safe_load)
-        model = _import_yolo()(str(weights_path), task="detect")
+        yolo = _import_yolo()
+        if safe_load:
+            confirm_safe_load_active()  # before the checkpoint is unpickled, never after
+        model = yolo(str(weights_path), task="detect")
+        stride = model_stride(model)
+        if stride is None:
+            logger.warning("Could not read the model stride; relying on the multiple-of-32 check")
+        elif config.image_size % stride:
+            raise ValueError(f"image_size {config.image_size} is not a multiple of the model stride {stride}")
         names: dict[int, str] = {int(k): str(v) for k, v in model.names.items()}
         too_long = [n for n in names.values() if len(n) > _MAX_CLASS_NAME_LENGTH]
         if too_long:

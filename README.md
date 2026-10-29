@@ -1,6 +1,6 @@
 # Vehicle Damage AI
 
-Vehicle damage assessment and insurance-report verification. **Current scope (Phase 2)**: inspections, image capture/upload with validation and local storage, and image management. No damage detection, report generation or verification exists yet.
+Vehicle damage assessment and insurance-report verification. **Current scope (Phase 3)**: inspections, image capture/upload with validation and local storage, image management, and optional local YOLO damage detection (API and UI). The backend also has a model-independent claim-verification pipeline (claim schemas, evidence association, a deterministic verdict policy, and `verify_report`) that is tested with development stubs only. It has no HTTP endpoint and no frontend, and nothing generates reports yet; no report-generation or verification model is wired in.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/api-design.md](docs/api-design.md).
 
@@ -68,6 +68,14 @@ python -m app.services.reconciliation --json   # machine-readable
 
 It reports missing files, orphaned files, checksum mismatches and unsafe paths, and **never changes or deletes anything**. Exit code 1 means it found problems. To resolve one, inspect the listed relative path under `STORAGE_ROOT` yourself (an orphan can be removed by hand once you are sure it is not needed; a missing file means the row should be deleted through the API or restored from backup).
 
+Detection runs left `running` by a crashed or killed worker are cleared **manually** (nothing schedules this):
+
+```bash
+python -m app.services.detection.recovery
+```
+
+It fails only runs whose worker has sent no heartbeat for `DETECTOR_STALE_RUN_MINUTES`; a slow run that is still alive keeps beating and is never touched. It is safe to run at any time, repeatedly, and alongside workers or other recovery processes.
+
 ## Environment variables
 
 | File | Variable | Purpose |
@@ -79,6 +87,11 @@ It reports missing files, orphaned files, checksum mismatches and unsafe paths, 
 | | `STORAGE_ROOT` | Image directory (default `../storage/inspections`) |
 | | `MAX_UPLOAD_BYTES`, `MAX_IMAGES_PER_INSPECTION`, `MIN_IMAGE_SIDE_PX`, `MAX_IMAGE_PIXELS` | Server-side upload limits |
 | | `LOG_LEVEL`, `APP_ENV` | Optional |
+| | `DETECTOR_BACKEND`, `DETECTOR_WEIGHTS_PATH`, `DETECTOR_MODEL_NAME`, `DETECTOR_MODEL_VERSION` | Local detection (`none` disables it; weights are a local `.pt` file, never downloaded) |
+| | `DETECTOR_IMAGE_SIZE` | Inference size; must be a positive multiple of 32 (never rounded), and of the loaded model's stride |
+| | `DETECTOR_WEIGHTS_SHA256` | Optional pin: weights with any other SHA-256 are refused before loading |
+| | `DETECTOR_SAFE_LOAD` | Opt-in restricted checkpoint loading; refuses to load if it cannot be guaranteed (off by default, not yet tried with a real checkpoint) |
+| | `DETECTOR_STALE_RUN_MINUTES`, `DETECTOR_HEARTBEAT_SECONDS` | Stale-run recovery threshold and worker heartbeat interval (threshold must be >= 4 heartbeats) |
 | `frontend/.env` | `VITE_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
 | | `VITE_MAX_IMAGE_BYTES`, `VITE_MAX_IMAGES_PER_INSPECTION` | Client-side limits for fast feedback; keep equal to the backend values |
 

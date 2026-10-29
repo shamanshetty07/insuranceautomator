@@ -28,3 +28,11 @@ def test_mapping(label, verdict):
 def test_unknown_label_raises():
     with pytest.raises(ValueError):
         legacy_verdict("something_new")
+
+
+def test_claim_labels_exclude_only_omitted_damage():
+    from app.services.verdict_mapping import CLAIM_LABELS, is_claim_label
+
+    assert set(VerificationLabel) - CLAIM_LABELS == {VerificationLabel.OMITTED_DAMAGE}
+    assert not is_claim_label(VerificationLabel.OMITTED_DAMAGE)
+    assert all(is_claim_label(label) for label in CLAIM_LABELS)

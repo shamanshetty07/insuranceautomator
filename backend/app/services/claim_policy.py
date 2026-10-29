@@ -40,9 +40,20 @@ Rule precedence (first matching rule wins):
                                             (absence of a detection is not evidence)
  13. verifier SUPPORTED + detection NO_DETECTION
                                          -> supported, review (verifier alone)
- 14. verifier SUPPORTED (MATCHES / NOT_APPLICABLE) -> supported, no review
- 15. verifier CONTRADICTED (CONFLICTS / NOT_APPLICABLE) -> contradicted, no review
- 16. verifier INSUFFICIENT_EVIDENCE      -> insufficient_evidence, no review
+ 14. verifier SUPPORTED / CONTRADICTED + detection not corroborating
+     (INCONCLUSIVE, UNAVAILABLE, or NOT_APPLICABLE on a visual claim)
+                                         -> the verifier's verdict, review (verifier alone)
+ 15. verifier SUPPORTED (MATCHES; NOT_APPLICABLE on a non-visual claim)
+                                         -> supported, no review
+ 16. verifier CONTRADICTED (CONFLICTS; NOT_APPLICABLE on a non-visual claim)
+                                         -> contradicted, no review
+ 17. verifier INSUFFICIENT_EVIDENCE      -> insufficient_evidence, no review
+
+Rule 14 means a visual claim never gets less scrutiny because detection is missing:
+an image never analysed, with only a failed run, or whose detections could not be
+compared with the claim is reviewed, like an image with zero detections (rule 13).
+A detection match is only consistency of cited evidence, never proof (see
+evidence_association), so it can only withhold review, never create a verdict.
 """
 
 import enum
@@ -66,10 +77,12 @@ class EvidenceAssociation(str, enum.Enum):
 
 
 class DetectionMatch(str, enum.Enum):
-    MATCHES_CLAIM = "matches_claim"
-    NO_DETECTION = "no_detection"
-    CONFLICTS_WITH_CLAIM = "conflicts_with_claim"
-    NOT_APPLICABLE = "not_applicable"
+    MATCHES_CLAIM = "matches_claim"  # every cited detection agrees with the claim's attributes
+    NO_DETECTION = "no_detection"  # every cited image was analysed and nothing was detected
+    CONFLICTS_WITH_CLAIM = "conflicts_with_claim"  # every cited detection disagrees with the claim
+    INCONCLUSIVE = "inconclusive"  # detections exist but cannot be compared with the claim
+    UNAVAILABLE = "unavailable"  # a cited image has no completed detection run
+    NOT_APPLICABLE = "not_applicable"  # detection is irrelevant (non-visual claim / bad evidence)
 
 
 class ReasonCode(str, enum.Enum):
@@ -92,6 +105,8 @@ class ReasonCode(str, enum.Enum):
     DETECTION_MATCHES_CONTRADICTED = "detection_matches_contradicted"
     NO_DETECTION_NOT_ABSENCE = "no_detection_not_absence"
     VERIFIER_SUPPORTED_NO_DETECTION = "verifier_supported_no_detection"
+    DETECTION_INCONCLUSIVE = "detection_inconclusive"
+    DETECTION_UNAVAILABLE = "detection_unavailable"
     VERIFIER_SUPPORTED = "verifier_supported"
     VERIFIER_CONTRADICTED = "verifier_contradicted"
     VERIFIER_INSUFFICIENT = "verifier_insufficient"
@@ -126,7 +141,8 @@ class ClaimPolicyDecision:
 
 
 # Recorded on every VerificationRun; bump when a rule or reason code changes behavior.
-POLICY_VERSION = "claim-policy-1"
+# 2: detection that cannot corroborate a visual claim (inconclusive/unavailable) -> review.
+POLICY_VERSION = "claim-policy-2"
 
 _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}
@@ -153,6 +169,17 @@ def _coerce_enum(enum_cls, value):  # noqa: ANN001, ANN202
 
 def _insufficient(reason: ReasonCode, explanation: str, review: bool = True) -> ClaimPolicyDecision:
     return ClaimPolicyDecision(Verdict.INSUFFICIENT_EVIDENCE, review, (reason,), explanation)
+
+
+def _uncorroborated_reason(ctype: ClaimType, det: DetectionMatch) -> ReasonCode | None:
+    """Reason code when detection cannot corroborate the claim (rule 14), else None."""
+    if det is DetectionMatch.UNAVAILABLE:
+        return ReasonCode.DETECTION_UNAVAILABLE
+    if det is DetectionMatch.INCONCLUSIVE:
+        return ReasonCode.DETECTION_INCONCLUSIVE
+    if det is DetectionMatch.NOT_APPLICABLE and ctype in _VISUAL_TYPES:
+        return ReasonCode.DETECTION_INCONCLUSIVE  # a visual claim always has a detection question
+    return None
 
 
 def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
@@ -213,6 +240,7 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
         return _insufficient(ReasonCode.VERIFIER_INVALID, "Verifier verdict was not recognised.")
 
     det = inp.detection_match
+    uncorroborated = _uncorroborated_reason(ctype, det)
     if verdict is Verdict.SUPPORTED:
         if det is DetectionMatch.CONFLICTS_WITH_CLAIM:
             return _insufficient(
@@ -225,6 +253,13 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
                 True,
                 (ReasonCode.VERIFIER_SUPPORTED_NO_DETECTION,),
                 "Supported by the verifier alone; no detection corroborates it.",
+            )
+        if uncorroborated is not None:
+            return ClaimPolicyDecision(
+                Verdict.SUPPORTED,
+                True,
+                (uncorroborated,),
+                "Supported by the verifier alone; detection could not be compared with the claim.",
             )
         return ClaimPolicyDecision(
             Verdict.SUPPORTED, False, (ReasonCode.VERIFIER_SUPPORTED,), "Verifier supports the claim."
@@ -239,6 +274,13 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
             return _insufficient(
                 ReasonCode.NO_DETECTION_NOT_ABSENCE,
                 "A missing detection is not evidence of absence; not contradicting.",
+            )
+        if uncorroborated is not None:
+            return ClaimPolicyDecision(
+                Verdict.CONTRADICTED,
+                True,
+                (uncorroborated,),
+                "Contradicted by the verifier alone; detection could not be compared with the claim.",
             )
         return ClaimPolicyDecision(
             Verdict.CONTRADICTED,

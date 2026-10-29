@@ -2,8 +2,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.schemas.runs import check_image_size_multiple
 
 
 class Settings(BaseSettings):
@@ -37,17 +39,43 @@ class Settings(BaseSettings):
     detector_model_version: str | None = Field(default=None, max_length=100)
     detector_confidence_threshold: float = Field(default=0.25, ge=0, le=1)
     detector_iou_threshold: float = Field(default=0.45, ge=0, le=1)
+    # Must be a positive multiple of the model stride (32 for standard YOLO detection
+    # models); never rounded. The loaded model's own stride is checked again at load.
     detector_image_size: int = Field(default=640, gt=0)
     detector_max_detections: int = Field(default=100, gt=0)
     detector_device: str | None = "cpu"
-    # Opt-in: sets ULTRALYTICS_SAFE_LOAD=1 before ultralytics is first imported, so
-    # checkpoints load with torch weights_only=True and an allow-list of known classes.
-    # Off by default because a given checkpoint must be confirmed to load under it.
+    # Opt-in restricted checkpoint loading (torch weights_only=True + Ultralytics'
+    # allow-list). When true, loading FAILS rather than falling back if Ultralytics
+    # cannot actually apply it (imported earlier without it, torch < 2.6, unknown
+    # Ultralytics internals). Off by default: no checkpoint has been confirmed under it.
     detector_safe_load: bool = False
-    # A `running` detection run older than this is treated as abandoned by the recovery
-    # command. Runs are created per image just before inference, so this bounds the
-    # time for ONE image (plus waiting for the inference lock), not a whole request.
+    # Expected lowercase hex SHA-256 of the approved weights file. When set, a file with
+    # any other digest is refused before it is loaded. Unset: no pin (a warning is logged).
+    detector_weights_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # A `running` detection run whose worker has not sent a heartbeat for this long is
+    # treated as abandoned by the recovery command (manual; see detection/recovery.py).
     detector_stale_run_minutes: int = Field(default=30, gt=0)
+    # How often a worker refreshes the heartbeat of the run it is processing.
+    detector_heartbeat_seconds: int = Field(default=30, gt=0)
+
+    @field_validator("detector_image_size")
+    @classmethod
+    def check_image_size(cls, v: int) -> int:
+        return check_image_size_multiple(v)
+
+    @field_validator("detector_weights_sha256", mode="before")
+    @classmethod
+    def lowercase_sha256(cls, v: object) -> object:
+        return v.strip().lower() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def check_stale_threshold(self) -> "Settings":
+        if self.detector_stale_run_minutes * 60 < 4 * self.detector_heartbeat_seconds:
+            raise ValueError(
+                "DETECTOR_STALE_RUN_MINUTES must be at least 4 heartbeat intervals "
+                "(DETECTOR_HEARTBEAT_SECONDS), or a live run could look abandoned"
+            )
+        return self
 
 
 @lru_cache

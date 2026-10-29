@@ -11,6 +11,12 @@ verifier is any ClaimVerificationService.
   apart from the final policy outcome (`verdict`, `needs_human_review`,
   `policy_reason_codes`). The verifier never sees the report text or detection boxes,
   only the claim text and the cited original images, so it cannot grade its own report.
+  Only claim labels (verdict_mapping.CLAIM_LABELS) are stored as a claim's raw label;
+  an unrecognised label or omitted_damage is stored as NULL with the reason in the
+  explanation, and the policy fails that claim closed (insufficient_evidence, review).
+  Every row built here therefore satisfies the table's CHECK constraints.
+- Results are written in ONE transaction: if that write still fails, no result is kept
+  and the run is marked `failed` with SAVE_FAILED_MESSAGE (never a partial run).
 - The verifier is not called when the policy already decides the claim without it
   (unusable evidence, hidden damage, cost, ...), so no inference is wasted.
 - No database transaction is open while the verifier runs: the run is committed as
@@ -46,7 +52,7 @@ from app.services.evidence_association import ClaimEvidence, associate_claims
 from app.services.image_storage import ImageStorage
 from app.services.interfaces import ClaimVerificationService
 from app.services.types import EvidenceBundle, ImageRef, ReportClaim
-from app.services.verdict_mapping import legacy_verdict
+from app.services.verdict_mapping import is_claim_label, legacy_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +126,17 @@ def _ask_verifier(verifier: ClaimVerificationService, claim: ExtractedClaim, ev:
             None,
             VerifierOutcome(verdict=_UNRECOGNISED),
             "The verifier returned an unrecognised label.",
+            True,
+            False,
+        )
+    if not is_claim_label(label):
+        # omitted_damage describes damage missing from the report, not this claim. It is
+        # not stored as the claim's raw label (a claim row always has a verdict, and an
+        # omitted_damage row must not); the explanation records what the verifier said.
+        return _Raw(
+            None,
+            VerifierOutcome(verdict=_UNRECOGNISED),
+            f"The verifier answered '{label.value}', which is not a verdict on a report claim.",
             True,
             False,
         )

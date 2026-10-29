@@ -5,22 +5,43 @@ and version are NOT repeated here (they have dedicated columns), and neither are
 prediction IDs used by a report (see the report_predictions table).
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class DetectionConfig(_Strict):
-    """Inference parameters for a YOLO run."""
+# Standard YOLO detection models downsample by 32; Ultralytics silently rounds any
+# other inference size up (and the recorded size would then be wrong), so it is
+# rejected instead. A model with a larger stride (e.g. a P6 model, 64) is checked
+# against its own stride when it loads (ultralytics_detector).
+IMAGE_SIZE_STRIDE = 32
 
+
+def check_image_size_multiple(value: int, stride: int = IMAGE_SIZE_STRIDE) -> int:
+    """Return `value` unchanged if it is a positive multiple of `stride`; never rounds."""
+    if value <= 0 or value % stride:
+        raise ValueError(f"image_size must be a positive multiple of {stride}, got {value}")
+    return value
+
+
+class _DetectionParams(_Strict):
     confidence_threshold: float = Field(ge=0, le=1)
     iou_threshold: float = Field(ge=0, le=1)
     image_size: int = Field(gt=0)
     max_detections: int = Field(gt=0)
     class_filter: list[str] | None = None
     device: str | None = None
+
+
+class DetectionConfig(_DetectionParams):
+    """Inference parameters for a new YOLO run (image_size: positive multiple of 32)."""
+
+    @field_validator("image_size")
+    @classmethod
+    def check_image_size(cls, v: int) -> int:
+        return check_image_size_multiple(v)
 
 
 class RuntimeVersions(_Strict):
@@ -34,10 +55,12 @@ class RuntimeVersions(_Strict):
     torch: str | None = None
 
 
-class StoredDetectionConfig(DetectionConfig):
+class StoredDetectionConfig(_DetectionParams):
     """What a DetectionRun stores: the inference parameters plus server-recorded runtime.
 
-    `runtime` is optional so rows written before it existed still validate.
+    `runtime` is optional so rows written before it existed still validate. Likewise
+    image_size only has to be positive here: a historical run recorded with a size
+    that is not a multiple of 32 stays readable. New runs get DetectionConfig's check.
     """
 
     runtime: RuntimeVersions | None = None

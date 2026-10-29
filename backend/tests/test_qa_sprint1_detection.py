@@ -4,6 +4,7 @@ Mostly DB-less (fake session/detector). Tests marked requires_db exercise the re
 conditional UPDATE and are skipped without TEST_DATABASE_URL.
 """
 
+import contextlib
 import importlib.metadata
 import os
 import sys
@@ -25,6 +26,7 @@ from app.services.detection import runtime as runtime_module
 from app.services.detection import ultralytics_detector
 from app.services.types import Detection, ImageRef, ModelInfo
 from tests.conftest import requires_db
+from tests.test_detection_hardening import install_fake_ultralytics as _install_fake_ultralytics
 from tests.factories import make_image, make_run
 from app.models import Inspection
 
@@ -43,6 +45,8 @@ class FakeSession:
         self.executed: list[object] = []
         self.fail_commits_after = fail_commits_after  # commit number (1-based) from which commits fail
         self.state_at_commit: list[tuple[str, object]] = []
+        self.refreshed: list[tuple[object, bool]] = []
+        self.on_refresh = None  # simulate another transaction changing the row before the lock
 
     def add(self, obj):
         self.added.append(obj)
@@ -62,6 +66,11 @@ class FakeSession:
 
     def execute(self, stmt):
         self.executed.append(stmt)
+
+    def refresh(self, obj, with_for_update=False):
+        self.refreshed.append((obj, with_for_update))
+        if self.on_refresh:
+            self.on_refresh(obj)
 
 
 class FakeStorage:
@@ -90,8 +99,12 @@ def target(tmp_path):
     return svc._Target(image_id=uuid.uuid4(), storage_path="a/b.jpg"), FakeStorage(f)
 
 
-def _run_one(db, storage, tgt, behaviour):
-    return svc._run_one(db, storage, FakeDetector(behaviour), tgt)
+def _no_heartbeat(run_id):
+    return contextlib.nullcontext()
+
+
+def _run_one(db, storage, tgt, behaviour, heartbeat=_no_heartbeat):
+    return svc._run_one(db, storage, FakeDetector(behaviour), tgt, heartbeat)
 
 
 # --- Task A --------------------------------------------------------------------
@@ -176,7 +189,8 @@ def test_fail_stale_runs_issues_one_conditional_update():
     now = datetime(2026, 1, 1, tzinfo=UTC)
     assert svc.fail_stale_runs(db, timedelta(minutes=30), now=now) == 3
     sql = str(db.executed[0].compile()).lower()
-    assert "status" in sql and "created_at <" in sql and "completed_at" in sql
+    assert "status" in sql and "completed_at" in sql
+    assert "coalesce(detection_runs.heartbeat_at, detection_runs.created_at) <" in sql
     assert db.commits == 1
 
 
@@ -298,8 +312,8 @@ def test_safe_load_is_off_by_default_and_leaves_env_alone(monkeypatch):
 
 def test_safe_load_env_is_set_before_the_lazy_import(monkeypatch, tmp_path):
     monkeypatch.delenv("ULTRALYTICS_SAFE_LOAD", raising=False)
-    monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
-    fake = types.ModuleType("ultralytics")
+    _install_fake_ultralytics(monkeypatch, safe_load_flag=True)
+    fake = sys.modules["ultralytics"]
 
     class YOLO:
         names = {0: "dent"}
@@ -308,7 +322,6 @@ def test_safe_load_env_is_set_before_the_lazy_import(monkeypatch, tmp_path):
             pass
 
     fake.YOLO = YOLO
-    sys.modules["ultralytics"] = fake
     seen_at_import = {}
     weights = tmp_path / "m.pt"
     weights.write_bytes(b"w")
@@ -323,6 +336,5 @@ def test_safe_load_env_is_set_before_the_lazy_import(monkeypatch, tmp_path):
     try:
         ultralytics_detector.UltralyticsDetector(weights, "m", "1", CONFIG, safe_load=True)
     finally:
-        sys.modules.pop("ultralytics", None)
         os.environ.pop("ULTRALYTICS_SAFE_LOAD", None)
     assert seen_at_import["value"] == "1"

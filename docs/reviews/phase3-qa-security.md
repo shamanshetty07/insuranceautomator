@@ -270,8 +270,8 @@ is Agent A's real-model test, which needs Ultralytics and weights.
 | T-2 invalid input | **Mostly met** | Paths go through `ImageStorage.resolve`. A missing or unsafe file gives a `failed` run. `image_ids` are UUIDs scoped to the inspection, deduplicated, and limited to 1-100. Each stored mode reaches the model as RGB at the stored size (tested), except 16-bit PNG (P2-I-1). |
 | T-3 resources | **Met** | One process-wide `_INFERENCE_LOCK`, shared across detector instances (tested with 6 threads, at most 1 active). A single model load under `_load_lock` (tested with 5 threads, 1 instance). Settings come from the server only. |
 | T-4 concurrency | **Met** | Concurrent POSTs create independent runs, and `latest` is deterministic (`DISTINCT ON image_order`, then `created_at` and `id` DESC; tested). An image deleted mid-run is dropped without a 500 (Agent A's test). |
-| T-5 recovery | **Partly met** | Runs are committed as `running` before inference, and each per-image exception becomes a `failed` run. A stale `running` run is shown truthfully (tested). Missing: a reaper or reconciliation entry (P2-O-1). |
-| T-6 reproducibility | **Partly met** | Recorded: the model name and version, `weights_sha256`, the applied `DetectionConfig` including the device, and wall-clock timestamps. Not recorded: the Ultralytics and torch versions (needs a lead decision; no schema change was made). The `image_size` stride issue is P2-O-2. |
+| T-5 recovery | **Mostly met (hardening pass)** | Runs are committed as `running` before inference, and each per-image exception becomes a `failed` run. A stale `running` run is shown truthfully (tested). A manual, heartbeat-based recovery command now exists (P2-O-1); its database-level race tests have not been run. |
+| T-6 reproducibility | **Met (Sprint 1 + hardening pass)** | Recorded: the model name and version, `weights_sha256`, the applied `DetectionConfig` including the device, wall-clock timestamps, and (since Sprint 1) the installed Ultralytics and torch versions in `config.runtime`. `image_size` is now rejected unless it is a multiple of 32 and of the model's stride, so the recorded size is the applied size (P2-O-2). |
 | T-7 leakage | **Met** | Client-facing messages are fixed strings; exception text containing paths or CUDA details never reaches the response (tested). `/detector` exposes no paths (Agent A's test and this pass). |
 | T-8 supply chain | **Met** | `ultralytics==8.4.191` is pinned in the optional `detection` extra. The import is lazy and does not happen at startup. `YOLO_OFFLINE=1` is honored, because `env_bool` accepts "1", so `ONLINE` is False, which disables GA telemetry and hub calls. `YOLO_AUTOINSTALL=0` is set. Both are tested. The AGPL caveat is in the module docstring. |
 
@@ -324,7 +324,7 @@ None found.
 
 **P2-I-4. Ultralytics' opt-in restricted loading is not enabled.**
 
-**Status: Partially mitigated (Sprint 1), opt-in only.** `DETECTOR_SAFE_LOAD=true` sets `ULTRALYTICS_SAFE_LOAD=1` before the first import (checked in the 8.4.191 source; requires torch >= 2.6). It is off by default and has not been tried with a real damage checkpoint, so it is not yet the default. Still open: confirm the approved checkpoint loads under it, then flip the default; add an expected-sha256 pin.
+**Status: Mitigated in code, opt-in, not validated with a real checkpoint (hardening pass).** `DETECTOR_SAFE_LOAD=true` sets `ULTRALYTICS_SAFE_LOAD=1` before the first import and then fails closed: before the checkpoint is read it checks Ultralytics' resolved `nn.tasks.SAFE_LOAD` and `_SafeLoad.SUPPORTED` (8.4.191 source), and refuses to load if Ultralytics was imported earlier without the flag, torch is older than 2.6 (where 8.4.191 silently degrades to an unrestricted load), or those internals are missing. `DETECTOR_WEIGHTS_SHA256` pins the approved file; a mismatch is refused before Ultralytics is imported. Tested only with a fake `ultralytics` package. Still open: confirm the approved checkpoint loads under safe load, then make it the default and configure its pin. The pin does not close the P2-O-4 time-of-check gap.
 - Where: `ultralytics_detector.py:40-45`.
 - Evidence: by default, 8.4.191 loads checkpoints with `torch.load(weights_only=False)`
   (`utils/patches.py` `torch_load`), which unpickles the whole file. The release offers
@@ -340,7 +340,7 @@ None found.
 
 **P2-O-1. No reaper for runs left in `running`.**
 
-**Status: Mostly fixed (Sprint 1).** BaseException and a failed final commit now leave a `failed` run where possible, and `python -m app.services.detection.recovery` fails runs older than `DETECTOR_STALE_RUN_MINUTES`. Age is the only signal, so with several workers a still-active run past the threshold would also be failed. The DB-backed tests for this could not run (no `TEST_DATABASE_URL`).
+**Status: Fixed in code, manual only; database tests not run (hardening pass).** BaseException and a failed final commit leave a `failed` run where possible. Workers refresh `heartbeat_at` (migration 0005) while they hold a run, and `python -m app.services.detection.recovery` fails only runs with no heartbeat for `DETECTOR_STALE_RUN_MINUTES`, so an old but live run is no longer failed. Recovery is one conditional UPDATE (idempotent, safe between recovery processes), and the worker's final write locks the row and keeps a failure that recovery committed first, discarding its predictions; the earlier "completed with an interruption error" outcome is no longer possible. Remaining: it is not scheduled; a hung but alive process keeps its run `running`; the real-Postgres race tests (`tests/test_detection_hardening.py`, marked `requires_db`) have not been run because no disposable test database was available.
 - Where: `detection_service.py:136-149`.
 - A crash, a kill, or a `BaseException` such as worker cancellation during inference leaves a run
   `running` forever.
@@ -348,6 +348,8 @@ None found.
   style of reconciliation, with a fixed message such as "Interrupted".
 
 **P2-O-2. `image_size` is not validated as a multiple of the model stride (32).**
+
+**Status: Fixed (hardening pass).** `DETECTOR_IMAGE_SIZE` and `DetectionConfig.image_size` must be positive multiples of 32 (rejected, never rounded); the loaded model's own stride is checked again at load. Stored historical runs with other sizes remain readable (`StoredDetectionConfig`). Tested without a database.
 - Where: `config.py:40`.
 - Ultralytics rounds it up and logs a warning, so the recorded `DetectionConfig.image_size` can
   differ from what was actually applied.

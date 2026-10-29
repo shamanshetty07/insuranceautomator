@@ -8,7 +8,11 @@ from typing import Protocol
 from app.core.config import Settings
 from app.schemas.detection import DetectorStatusRead
 from app.schemas.runs import DetectionConfig
-from app.services.detection.ultralytics_detector import UltralyticsDetector, is_weights_file
+from app.services.detection.ultralytics_detector import (
+    UltralyticsDetector,
+    UnsafeLoadRefused,
+    is_weights_file,
+)
 from app.services.interfaces import DamageDetectionService
 
 logger = logging.getLogger(__name__)
@@ -55,7 +59,14 @@ class SettingsDetectorProvider:
     def _key(self) -> tuple[object, ...]:
         s = self._settings
         path = s.detector_weights_path.resolve() if s.detector_weights_path else None
-        return (path, s.detector_model_name, s.detector_model_version, self._config.model_dump_json(), s.detector_safe_load)
+        return (
+            path,
+            s.detector_model_name,
+            s.detector_model_version,
+            self._config.model_dump_json(),
+            s.detector_safe_load,
+            s.detector_weights_sha256,
+        )
 
     def _unavailable_reason(self) -> str | None:
         s = self._settings
@@ -98,8 +109,13 @@ class SettingsDetectorProvider:
                 try:
                     detector = UltralyticsDetector(
                         s.detector_weights_path, s.detector_model_name, s.detector_model_version, self._config,
-                        safe_load=s.detector_safe_load,
+                        safe_load=s.detector_safe_load, expected_sha256=s.detector_weights_sha256,
                     )
+                except UnsafeLoadRefused:
+                    logger.exception("Refused to load the detection model")
+                    raise DetectorUnavailable(
+                        "The detection model was refused by a configured safeguard (see the server log)."
+                    ) from None
                 except Exception:
                     logger.exception("Failed to load the detection model")
                     raise DetectorUnavailable("The detection model failed to load.") from None

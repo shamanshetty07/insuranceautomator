@@ -52,7 +52,7 @@ def test_deterministic():
 def test_empty_images():
     r = StubStructuredReportGenerator().generate_structured(ev(images=()))
     assert r.report_text == "No images were provided."
-    assert r.claims.claims == []
+    assert r.claims.claims == ()
     StructuredReport.model_validate(r.model_dump())
 
 
@@ -70,9 +70,9 @@ def test_crops_and_predictions():
     cl = [c for c in r.generate_structured(ev()).claims.claims if c.claim_type == ClaimType.DAMAGE_TYPE]
     assert len(cl) == 3
     assert cl[0].evidence[0].crop.x_max == 0.5 and "dent" in cl[0].text
-    assert cl[0].prediction_ids == [P1] and cl[1].prediction_ids == [P2]
+    assert cl[0].prediction_ids == (P1,) and cl[1].prediction_ids == (P2,)
     assert cl[1].evidence[0].crop is None  # invalid box dropped
-    assert cl[2].prediction_ids == [] and cl[2].image_ids == [B]
+    assert cl[2].prediction_ids == () and cl[2].image_ids == (B,)
 
 
 def test_unverifiable_flag():

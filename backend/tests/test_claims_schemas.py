@@ -45,8 +45,8 @@ def test_valid_evidence_and_claim():
 
 
 def test_minimal_claim_and_empty_result():
-    assert ExtractedClaim(**claim()).evidence == []
-    assert ClaimExtractionResult().claims == []
+    assert ExtractedClaim(**claim()).evidence == ()
+    assert ClaimExtractionResult().claims == ()
 
 
 def test_text_stripped_and_bounds():
@@ -189,3 +189,83 @@ def test_crop_rejects_unknown_keys():
     EvidenceReference(image_id=uuid.uuid4(), crop=box)
     with pytest.raises(ValidationError):
         EvidenceReference(image_id=uuid.uuid4(), crop={**box, "extra": 1})
+
+
+# --- immutability and duplicate evidence (hardening) ------------------------------------
+
+
+def _full_claim():
+    return ExtractedClaim(**claim(
+        image_ids=[IMG], prediction_ids=[PRED],
+        evidence=[{"image_id": str(IMG), "prediction_id": str(PRED), "crop": BOX}],
+    ))
+
+
+def test_validated_collections_cannot_be_mutated_to_bypass_validation():
+    c = _full_claim()
+    # The audit's reproduction: appending a duplicate id used to succeed silently.
+    with pytest.raises(AttributeError):
+        c.image_ids.append(IMG)  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        c.prediction_ids[0] = PRED2  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        c.evidence.append(EvidenceReference(image_id=IMG))  # type: ignore[attr-defined]
+    with pytest.raises(ValidationError):
+        c.evidence[0].image_id = IMG2  # nested reference is frozen
+    with pytest.raises(ValidationError):
+        c.evidence[0].crop.x_max = 0.9  # nested crop is frozen
+    result = ClaimExtractionResult(claims=[c])
+    with pytest.raises(AttributeError):
+        result.claims.append(c)  # type: ignore[attr-defined]
+    assert c.image_ids == (IMG,) and c.evidence[0].crop.x_max == 0.5
+
+
+def test_input_lists_are_copied_not_aliased():
+    ids = [IMG]
+    c = ExtractedClaim(**claim(image_ids=ids))
+    ids.append(IMG)  # mutating the caller's list cannot reach the validated object
+    assert c.image_ids == (IMG,)
+
+
+def test_validated_objects_are_hashable():
+    assert hash(_full_claim()) == hash(_full_claim())
+
+
+def test_json_format_unchanged_arrays():
+    dumped = _full_claim().model_dump(mode="json")
+    assert dumped["image_ids"] == [str(IMG)] and isinstance(dumped["evidence"], list)
+    schema = ExtractedClaim.model_json_schema()
+    assert schema["properties"]["image_ids"]["type"] == "array"
+    assert schema["properties"]["image_ids"]["maxItems"] == 50
+
+
+@pytest.mark.parametrize("first,second", [
+    ({"image_id": str(IMG)}, {"image_id": str(IMG)}),
+    ({"image_id": str(IMG), "note": "a"}, {"image_id": str(IMG), "note": "b"}),  # note is not identity
+    ({"image_id": str(IMG), "crop": BOX}, {"image_id": str(IMG), "crop": dict(BOX)}),
+    ({"image_id": str(IMG), "prediction_id": str(PRED)}, {"image_id": str(IMG), "prediction_id": str(PRED)}),
+])
+def test_duplicate_evidence_references_rejected(first, second):
+    with pytest.raises(ValidationError, match="duplicate references"):
+        ExtractedClaim(**claim(image_ids=[IMG], prediction_ids=[PRED], evidence=[first, second]))
+
+
+def test_distinct_evidence_references_allowed():
+    other_box = {**BOX, "x_max": 0.6}
+    refs = [
+        {"image_id": str(IMG)},
+        {"image_id": str(IMG), "prediction_id": str(PRED)},
+        {"image_id": str(IMG), "crop": BOX},
+        {"image_id": str(IMG), "crop": other_box},
+        {"image_id": str(IMG2)},
+    ]
+    c = ExtractedClaim(**claim(image_ids=[IMG, IMG2], prediction_ids=[PRED], evidence=refs))
+    assert len(c.evidence) == 5
+
+
+def test_structured_damage_type():
+    assert ExtractedClaim(**claim()).damage_type is None
+    assert ExtractedClaim(**claim(damage_type="  dent ")).damage_type == "dent"
+    for bad in ["", "   ", "x" * 101, 5]:
+        with pytest.raises(ValidationError):
+            ExtractedClaim(**claim(damage_type=bad))

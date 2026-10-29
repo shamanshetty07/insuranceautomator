@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Query
 
-from app.api.deps import DbSession, Detector, Storage
+from app.api.deps import AppSettings, DbSession, Detector, Storage
 from app.schemas.common import ErrorResponse
 from app.schemas.detection import (
     DetectionRequest,
@@ -37,6 +37,7 @@ def run_detection(
     db: DbSession,
     storage: Storage,
     provider: Detector,
+    settings: AppSettings,
     body: Annotated[DetectionRequest | None, Body()] = None,
 ) -> DetectionRunList:
     """Run detection synchronously, one run per image (omit image_ids for all images).
@@ -44,7 +45,12 @@ def run_detection(
     A per-image failure is returned as a `failed` run; the request still succeeds.
     """
     runs = detection_service.run_detection(
-        db, storage, provider, inspection_id, body.image_ids if body else None
+        db,
+        storage,
+        provider,
+        inspection_id,
+        body.image_ids if body else None,
+        heartbeat_seconds=settings.detector_heartbeat_seconds,
     )
     return DetectionRunList(items=[DetectionRunRead.from_run(r) for r in runs])
 

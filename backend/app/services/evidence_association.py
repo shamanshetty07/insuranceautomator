@@ -17,15 +17,31 @@ Problem codes (stable; they never contain filesystem paths):
   image_dimensions_mismatch:<uuid>
   image_unreadable:<uuid>
   problems_truncated                      (only when to_record had to cap the list)
+
+Detection detail codes (EvidenceRecord.detection_details; why detection_match was chosen):
+  detection_not_run:<image uuid>          no completed detection run (never run, failed, running)
+  no_detections:<image uuid>              latest completed run found nothing
+  uncited_detections:<image uuid>         detections exist that the claim does not cite
+  prediction_not_latest:<uuid>            cited prediction is not from the image's latest completed run
+  detection_present:<uuid>                a cited detection exists (presence claims)
+  claim_damage_type_absent                the claim states no structured damage_type
+  damage_type_match:<uuid> / damage_type_mismatch:<uuid>
+  location_overlap:<uuid> / location_no_overlap:<uuid> / location_unclear:<uuid>
+  location_not_given:<uuid>               no crop pairs the claim with this detection
+  detection_box_absent:<uuid>             the detection has no usable bounding box
+  details_truncated
 """
 
 import hashlib
+import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -41,12 +57,18 @@ from app.schemas.claims import (
     EvidenceReference,
     ExtractedClaim,
 )
+from app.schemas.damage import BoundingBox
 from app.services.claim_policy import DetectionMatch, EvidenceAssociation, EvidenceIntegrity
 from app.services.image_storage import ImageStorage, StorageError
 
 _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}
 )
+
+# IoU at or above which a cited crop and a cited detection box count as the same region.
+# Not calibrated on data: it only separates "same place" / "disjoint" / "unclear" and
+# never makes a claim true. Disjoint (no overlap at all) is the only location conflict.
+LOCATION_MATCH_IOU = 0.3
 
 # Severity used to combine per-image results into one claim-level integrity.
 _SEVERITY = {
@@ -68,20 +90,151 @@ class ClaimEvidence:
     prediction_ids: tuple[uuid.UUID, ...]
     crops: tuple[EvidenceReference, ...]
     problems: tuple[str, ...]
+    detection_details: tuple[str, ...] = ()
 
     def to_record(self) -> EvidenceRecord:
-        problems = list(self.problems)
-        if len(problems) > MAX_REFERENCES_PER_CLAIM:
-            problems = problems[: MAX_REFERENCES_PER_CLAIM - 1] + ["problems_truncated"]
         return EvidenceRecord(
             association=self.association.value,
             integrity=self.integrity.value,
             detection_match=self.detection_match.value,
-            image_ids=[i for i, _ in self.image_paths],
-            prediction_ids=list(self.prediction_ids),
-            crops=list(self.crops),
-            problems=problems,
+            image_ids=tuple(i for i, _ in self.image_paths),
+            prediction_ids=self.prediction_ids,
+            crops=self.crops,
+            problems=_capped(self.problems, "problems_truncated"),
+            detection_details=_capped(self.detection_details, "details_truncated"),
         )
+
+
+def _capped(codes: Sequence[str], marker: str) -> tuple[str, ...]:
+    if len(codes) > MAX_REFERENCES_PER_CLAIM:
+        return (*codes[: MAX_REFERENCES_PER_CLAIM - 1], marker)
+    return tuple(codes)
+
+
+@dataclass(frozen=True)
+class PredictionFacts:
+    """What association knows about one cited prediction that resolved in the inspection."""
+
+    image_id: uuid.UUID
+    run_id: uuid.UUID
+    damage_type: str
+    bounding_box: Mapping[str, Any] | None
+
+
+def normalize_damage_type(name: str) -> str:
+    """Case, whitespace and hyphen-insensitive class name ("Paint-Scratch" == "paint_scratch")."""
+    return re.sub(r"[\s\-]+", "_", name.strip().lower())
+
+
+def _box(raw: Mapping[str, Any] | None) -> BoundingBox | None:
+    if raw is None:
+        return None
+    try:
+        return BoundingBox.model_validate(raw)
+    except ValidationError:
+        return None
+
+
+def box_iou(a: BoundingBox, b: BoundingBox) -> float:
+    w = min(a.x_max, b.x_max) - max(a.x_min, b.x_min)
+    h = min(a.y_max, b.y_max) - max(a.y_min, b.y_min)
+    if w <= 0 or h <= 0:
+        return 0.0
+    inter = w * h
+    area_a = (a.x_max - a.x_min) * (a.y_max - a.y_min)
+    area_b = (b.x_max - b.x_min) * (b.y_max - b.y_min)
+    return inter / (area_a + area_b - inter)
+
+
+# Per-prediction comparison outcome.
+_MATCH, _CONFLICT, _UNKNOWN = "match", "conflict", "unknown"
+
+
+def _location(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> tuple[str | None, str]:
+    """(None | match | conflict | unknown, detail) for crops the claim pairs with this detection."""
+    crops = [r.crop for r in claim.evidence if r.prediction_id == pid and r.crop is not None]
+    if not crops:
+        return None, f"location_not_given:{pid}"
+    box = _box(facts.bounding_box)
+    if box is None:
+        return _UNKNOWN, f"detection_box_absent:{pid}"
+    best = max(box_iou(c, box) for c in crops)
+    if best >= LOCATION_MATCH_IOU:
+        return _MATCH, f"location_overlap:{pid}"
+    if best == 0:
+        return _CONFLICT, f"location_no_overlap:{pid}"
+    return _UNKNOWN, f"location_unclear:{pid}"
+
+
+def _compare(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> tuple[str, list[str]]:
+    location, loc_detail = _location(claim, pid, facts)
+    if claim.claim_type is ClaimType.DAMAGE_LOCATION:
+        return (location if location is not None else _UNKNOWN), [loc_detail]
+
+    if claim.claim_type is ClaimType.VISIBLE_DAMAGE_PRESENCE:
+        # A detection is consistent with "damage is present"; a crop elsewhere only
+        # means this detection does not speak to the cited region (never a conflict).
+        details = [f"detection_present:{pid}", loc_detail]
+        return (_MATCH if location in (None, _MATCH) else _UNKNOWN), details
+
+    # DAMAGE_TYPE
+    if claim.damage_type is None:
+        return _UNKNOWN, ["claim_damage_type_absent", loc_detail]
+    if normalize_damage_type(claim.damage_type) == normalize_damage_type(facts.damage_type):
+        return (_MATCH if location in (None, _MATCH) else _UNKNOWN), [f"damage_type_match:{pid}", loc_detail]
+    # Different class: a conflict only where the detection is at the claimed place (or
+    # no place is given). A different class somewhere else says nothing about the claim.
+    return (_CONFLICT if location in (None, _MATCH) else _UNKNOWN), [f"damage_type_mismatch:{pid}", loc_detail]
+
+
+def detection_signal(
+    claim: ExtractedClaim,
+    cited_images: Sequence[uuid.UUID],
+    cited_predictions: Mapping[uuid.UUID, PredictionFacts],
+    latest_run: Mapping[uuid.UUID, uuid.UUID],
+    latest_count: Mapping[uuid.UUID, int],
+) -> tuple[DetectionMatch, tuple[str, ...]]:
+    """Compare one ASSOCIATED claim with detection results; pure (no DB, no files).
+
+    cited_images: the claim's images (all resolved in the inspection).
+    cited_predictions: the claim's resolved predictions, all on cited images.
+    latest_run / latest_count: latest COMPLETED run per image and its prediction count.
+
+    MATCHES_CLAIM / CONFLICTS_WITH_CLAIM need every cited detection to agree / disagree
+    on the attributes the claim states; anything mixed or not comparable is
+    INCONCLUSIVE. A cited image without a completed run makes the signal UNAVAILABLE;
+    NO_DETECTION needs every cited image analysed with nothing found. None of these
+    is a verdict: the policy decides (and never reads NO_DETECTION as absence).
+    """
+    if claim.claim_type not in _VISUAL_TYPES:
+        return DetectionMatch.NOT_APPLICABLE, ()
+    if not cited_images:
+        return DetectionMatch.INCONCLUSIVE, ()
+    not_run = [i for i in cited_images if i not in latest_run]
+    if not_run:
+        return DetectionMatch.UNAVAILABLE, tuple(f"detection_not_run:{i}" for i in not_run)
+    if not cited_predictions:
+        found = [i for i in cited_images if latest_count.get(i, 0) > 0]
+        if not found:
+            return DetectionMatch.NO_DETECTION, tuple(f"no_detections:{i}" for i in cited_images)
+        return DetectionMatch.INCONCLUSIVE, tuple(f"uncited_detections:{i}" for i in found)
+
+    outcomes: list[str] = []
+    details: list[str] = []
+    for pid, facts in cited_predictions.items():
+        if latest_run.get(facts.image_id) != facts.run_id:
+            outcomes.append(_UNKNOWN)
+            details.append(f"prediction_not_latest:{pid}")
+            continue
+        outcome, more = _compare(claim, pid, facts)
+        outcomes.append(outcome)
+        details.extend(more)
+    details_t = tuple(_dedupe(details))
+    if all(o == _MATCH for o in outcomes):
+        return DetectionMatch.MATCHES_CLAIM, details_t
+    if all(o == _CONFLICT for o in outcomes):
+        return DetectionMatch.CONFLICTS_WITH_CLAIM, details_t
+    return DetectionMatch.INCONCLUSIVE, details_t
 
 
 def _sha256_of(path: Path) -> str:
@@ -158,12 +311,13 @@ def associate_claims(
 ) -> list[ClaimEvidence]:
     """Associate every claim with evidence of ``inspection_id``; one result per claim, in order.
 
-    detection_match is only a SIGNAL for the policy. MATCHES_CLAIM means CITATION
-    consistency: the claim cites a real prediction on a cited image of this inspection.
-    It does not compare damage class or region semantically (ExtractedClaim has no
-    structured attribute to compare), so CONFLICTS_WITH_CLAIM is never produced in this
-    sprint. NO_DETECTION is returned only when every cited image has a completed
-    detection run with zero predictions; the policy must never read it as absence of damage.
+    Reference validity (association: are the ids real and in this inspection?) is
+    decided first and separately. Only for an ASSOCIATED visual claim is detection then
+    compared semantically by `detection_signal`: the claim's structured damage_type
+    against each cited detection's class, and its cited crops against the detection
+    boxes. detection_match is only a SIGNAL for the policy, never proof: a matching
+    class or an overlapping box does not make the claim true. The policy must never
+    read NO_DETECTION as absence of damage.
 
     Predictions that are cited but unresolved (foreign, unknown, on an uncited image, or
     without any cited image) are not reported in prediction_ids/crops; resolved ones are.
@@ -193,11 +347,17 @@ def associate_claims(
             )
         }
 
-    # prediction id -> image id, only for predictions inside this inspection.
-    pred_image: dict[uuid.UUID, uuid.UUID] = {}
+    # Facts for cited predictions, only for predictions inside this inspection.
+    pred_facts: dict[uuid.UUID, PredictionFacts] = {}
     if cited_preds:
-        for pid, img_id in db.execute(
-            select(DamagePrediction.id, DetectionRun.inspection_image_id)
+        for pid, run_id, img_id, damage_type, bounding_box in db.execute(
+            select(
+                DamagePrediction.id,
+                DamagePrediction.detection_run_id,
+                DetectionRun.inspection_image_id,
+                DamagePrediction.damage_type,
+                DamagePrediction.bounding_box,
+            )
             .join(DetectionRun, DamagePrediction.detection_run_id == DetectionRun.id)
             .join(InspectionImage, DetectionRun.inspection_image_id == InspectionImage.id)
             .where(
@@ -205,12 +365,13 @@ def associate_claims(
                 InspectionImage.inspection_id == inspection_id,
             )
         ):
-            pred_image[pid] = img_id
+            pred_facts[pid] = PredictionFacts(img_id, run_id, damage_type, bounding_box)
+    pred_image = {pid: facts.image_id for pid, facts in pred_facts.items()}
 
     # Latest completed run per resolved image, with its prediction count.
+    latest_run: dict[uuid.UUID, uuid.UUID] = {}
     latest_count: dict[uuid.UUID, int] = {}
     if images:
-        latest_run: dict[uuid.UUID, uuid.UUID] = {}
         for run_id, img_id in db.execute(
             select(DetectionRun.id, DetectionRun.inspection_image_id)
             .where(
@@ -301,12 +462,11 @@ def associate_claims(
                 image_paths.append((iid, res.path))
         integrity = _worst(statuses)
 
-        detection = DetectionMatch.NOT_APPLICABLE
-        if association is EvidenceAssociation.ASSOCIATED and claim.claim_type in _VISUAL_TYPES:
-            if good_preds:
-                detection = DetectionMatch.MATCHES_CLAIM
-            elif c_images and all(latest_count.get(i) == 0 for i in c_images):
-                detection = DetectionMatch.NO_DETECTION
+        detection, detection_details = DetectionMatch.NOT_APPLICABLE, ()
+        if association is EvidenceAssociation.ASSOCIATED:
+            detection, detection_details = detection_signal(
+                claim, c_images, {p: pred_facts[p] for p in good_preds}, latest_run, latest_count
+            )
 
         results.append(
             ClaimEvidence(
@@ -318,6 +478,7 @@ def associate_claims(
                 tuple(good_preds),
                 tuple(crops),
                 tuple(_dedupe(problems)),
+                detection_details,
             )
         )
     return results
