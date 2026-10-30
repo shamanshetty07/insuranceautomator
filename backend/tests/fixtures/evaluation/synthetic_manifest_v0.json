@@ -1,0 +1,379 @@
+{
+  "schema_version": "1",
+  "dataset_version": "synthetic-v0",
+  "dataset_kind": "synthetic",
+  "description": "SYNTHETIC test fixture. Images are generated in memory by named generators (solid colours with markers); labels were written by the developers to exercise the evaluation pipeline and are NOT human ground truth. Results on this manifest say nothing about real-world accuracy.",
+  "created": "2026-10-30",
+  "images": [
+    {
+      "fixture_id": "alpha-front",
+      "inspection_key": "insp-alpha",
+      "source": "synthetic:solid-color",
+      "visible_damage": [
+        {
+          "damage_type": "dent",
+          "location": "front bumper",
+          "bbox": {
+            "x_min": 0.3,
+            "y_min": 0.5,
+            "x_max": 0.6,
+            "y_max": 0.8
+          }
+        }
+      ],
+      "image_quality": "ok"
+    },
+    {
+      "fixture_id": "alpha-left-blurry",
+      "inspection_key": "insp-alpha",
+      "source": "synthetic:blurred-solid-color",
+      "visible_damage": [],
+      "image_quality": "blurry"
+    },
+    {
+      "fixture_id": "bravo-rear-left",
+      "inspection_key": "insp-bravo",
+      "source": "synthetic:solid-color-marker",
+      "visible_damage": [
+        {
+          "damage_type": "scratch",
+          "location": "rear left door",
+          "bbox": {
+            "x_min": 0.1,
+            "y_min": 0.4,
+            "x_max": 0.5,
+            "y_max": 0.55
+          }
+        }
+      ],
+      "image_quality": "ok"
+    },
+    {
+      "fixture_id": "bravo-rear-left-lowres",
+      "inspection_key": "insp-bravo",
+      "source": "synthetic:tiny-solid-color",
+      "visible_damage": [
+        {
+          "damage_type": "scratch",
+          "location": "rear left door"
+        }
+      ],
+      "image_quality": "low_resolution"
+    },
+    {
+      "fixture_id": "charlie-left",
+      "inspection_key": "insp-charlie",
+      "source": "synthetic:solid-color",
+      "visible_damage": [],
+      "image_quality": "ok"
+    },
+    {
+      "fixture_id": "charlie-front-occluded",
+      "inspection_key": "insp-charlie",
+      "source": "synthetic:occluded-solid-color",
+      "visible_damage": [],
+      "image_quality": "occluded"
+    },
+    {
+      "fixture_id": "delta-windshield",
+      "inspection_key": "insp-delta",
+      "source": "synthetic:solid-color-marker",
+      "visible_damage": [
+        {
+          "damage_type": "crack",
+          "location": "windshield",
+          "bbox": {
+            "x_min": 0.2,
+            "y_min": 0.2,
+            "x_max": 0.45,
+            "y_max": 0.35
+          }
+        }
+      ],
+      "image_quality": "ok"
+    }
+  ],
+  "claims": [
+    {
+      "claim_key": "alpha-c01",
+      "inspection_key": "insp-alpha",
+      "text": "There is a dent on the front bumper.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "dent",
+      "cited_fixture_ids": [
+        "alpha-front"
+      ],
+      "adversarial_tag": null,
+      "label": "supported",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z"
+      }
+    },
+    {
+      "claim_key": "alpha-c02",
+      "inspection_key": "insp-alpha",
+      "text": "The dent is located on the rear bumper.",
+      "claim_type": "damage_location",
+      "damage_type": "dent",
+      "cited_fixture_ids": [
+        "alpha-front"
+      ],
+      "adversarial_tag": "wrong_location",
+      "label": "contradicted",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Cited image shows the dent on the front bumper."
+      }
+    },
+    {
+      "claim_key": "alpha-c03",
+      "inspection_key": "insp-alpha",
+      "text": "The front bumper damage is a scratch.",
+      "claim_type": "damage_type",
+      "damage_type": "scratch",
+      "cited_fixture_ids": [
+        "alpha-front"
+      ],
+      "adversarial_tag": "wrong_damage_type",
+      "label": "contradicted",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Visible front bumper damage is labelled as a dent, not a scratch."
+      }
+    },
+    {
+      "claim_key": "alpha-c04",
+      "inspection_key": "insp-alpha",
+      "text": "The left front fender has a scratch.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "scratch",
+      "cited_fixture_ids": [
+        "alpha-left-blurry"
+      ],
+      "adversarial_tag": "low_quality_evidence",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Only image of the area is too blurry to judge."
+      }
+    },
+    {
+      "claim_key": "alpha-c05",
+      "inspection_key": "insp-alpha",
+      "text": "Repairing the front bumper will cost about 800 USD.",
+      "claim_type": "repair_cost",
+      "damage_type": null,
+      "cited_fixture_ids": [
+        "alpha-front"
+      ],
+      "adversarial_tag": "not_visually_decidable",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z"
+      }
+    },
+    {
+      "claim_key": "bravo-c01",
+      "inspection_key": "insp-bravo",
+      "text": "The rear left door has a scratch.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "scratch",
+      "cited_fixture_ids": [
+        "bravo-rear-left"
+      ],
+      "adversarial_tag": null,
+      "label": "supported",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z"
+      }
+    },
+    {
+      "claim_key": "bravo-c02",
+      "inspection_key": "insp-bravo",
+      "text": "The scratch on the rear left door is deep enough to expose bare metal.",
+      "claim_type": "damage_severity",
+      "damage_type": "scratch",
+      "cited_fixture_ids": [
+        "bravo-rear-left-lowres"
+      ],
+      "adversarial_tag": "ambiguous",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Low-resolution view; depth cannot be judged either way."
+      }
+    },
+    {
+      "claim_key": "bravo-c03",
+      "inspection_key": "insp-bravo",
+      "text": "The door frame behind the scratch is bent.",
+      "claim_type": "hidden_structural_damage",
+      "damage_type": null,
+      "cited_fixture_ids": [
+        "bravo-rear-left"
+      ],
+      "adversarial_tag": "not_visually_decidable",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z"
+      }
+    },
+    {
+      "claim_key": "bravo-c04",
+      "inspection_key": "insp-bravo",
+      "text": "The undercarriage shows impact damage.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "dent",
+      "cited_fixture_ids": [
+        "bravo-undercarriage"
+      ],
+      "adversarial_tag": "fabricated_reference",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Cited image does not exist in the inspection."
+      }
+    },
+    {
+      "claim_key": "charlie-c01",
+      "inspection_key": "insp-charlie",
+      "text": "There is a large dent on the left rear door.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "dent",
+      "cited_fixture_ids": [
+        "charlie-left"
+      ],
+      "adversarial_tag": "invented_damage",
+      "label": "contradicted",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Left side is clearly visible and undamaged."
+      }
+    },
+    {
+      "claim_key": "charlie-c02",
+      "inspection_key": "insp-charlie",
+      "text": "The roof has hail damage.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "dent",
+      "cited_fixture_ids": [
+        "charlie-left"
+      ],
+      "adversarial_tag": "area_not_visible",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Roof is not visible in any image."
+      }
+    },
+    {
+      "claim_key": "charlie-c03",
+      "inspection_key": "insp-charlie",
+      "text": "The front bumper is dented.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "dent",
+      "cited_fixture_ids": [
+        "alpha-front"
+      ],
+      "adversarial_tag": "cross_inspection_reference",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "Cites an image of another vehicle; own front view is occluded."
+      }
+    },
+    {
+      "claim_key": "charlie-c04",
+      "inspection_key": "insp-charlie",
+      "text": "The damage was caused by a collision with a pole.",
+      "claim_type": "damage_cause",
+      "damage_type": null,
+      "cited_fixture_ids": [
+        "charlie-left"
+      ],
+      "adversarial_tag": "not_visually_decidable",
+      "label": "unverifiable",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z"
+      }
+    },
+    {
+      "claim_key": "delta-c01",
+      "inspection_key": "insp-delta",
+      "text": "The windshield has a crack.",
+      "claim_type": "visible_damage_presence",
+      "damage_type": "crack",
+      "cited_fixture_ids": [
+        "delta-windshield"
+      ],
+      "adversarial_tag": null,
+      "label": "supported",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z"
+      }
+    },
+    {
+      "claim_key": "delta-c02",
+      "inspection_key": "insp-delta",
+      "text": "The windshield is completely shattered.",
+      "claim_type": "damage_severity",
+      "damage_type": "glass_shatter",
+      "cited_fixture_ids": [
+        "delta-windshield"
+      ],
+      "adversarial_tag": "wrong_severity",
+      "label": "contradicted",
+      "annotation": {
+        "annotator": "synthetic-fixture",
+        "status": "adjudicated",
+        "annotated_at": "2026-10-30T00:00:00Z",
+        "notes": "A single localized crack is visible; the rest of the glass is intact."
+      }
+    },
+    {
+      "claim_key": "delta-c03",
+      "inspection_key": "insp-delta",
+      "text": "The headlights are intact.",
+      "claim_type": "other",
+      "damage_type": null,
+      "cited_fixture_ids": [
+        "delta-windshield"
+      ],
+      "adversarial_tag": null,
+      "label": null,
+      "annotation": {
+        "annotator": null,
+        "status": "unannotated",
+        "annotated_at": null
+      }
+    }
+  ]
+}

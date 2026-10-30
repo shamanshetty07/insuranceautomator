@@ -169,7 +169,7 @@ def test_gates_never_bypass_hidden_damage_or_evidence_checks(flags, ctype, det):
 
 
 def test_policy_version_bumped_for_review_routing_change():
-    assert cp.POLICY_VERSION == "claim-policy-5"
+    assert cp.POLICY_VERSION == "claim-policy-6"
 
 
 @pytest.mark.parametrize("det", list(DetectionMatch))

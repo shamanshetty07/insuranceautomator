@@ -112,6 +112,8 @@ npm run build
 
 Note: `TEST_DATABASE_URL` is read from the process environment (not `backend/.env`), e.g. `export TEST_DATABASE_URL=postgresql+psycopg://...`.
 
+Verification evaluation (offline; synthetic fixtures only, no real images or human labels yet): see [docs/evaluation/README.md](docs/evaluation/README.md).
+
 ## Git safety
 
 `.gitignore` excludes env files, virtualenvs, `node_modules`, logs, model weight files (`*.pt`, `*.safetensors`, `*.gguf`, …) and everything under `storage/inspections/` except a placeholder.

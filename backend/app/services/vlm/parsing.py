@@ -143,4 +143,6 @@ def parse_verdict(raw: str) -> tuple[str, str]:
         verdict = _RawVerdict.model_validate(data)
     except ValidationError:
         raise VlmOutputError("The verifier output does not match the expected shape.", code="schema") from None
+    if not verdict.label.strip():
+        raise VlmOutputError("The verifier output has an empty label.", code="schema")
     return verdict.label.strip(), verdict.explanation.strip()

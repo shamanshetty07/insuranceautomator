@@ -87,7 +87,7 @@ class ClaimPolicyDecision:
     explanation: str
 
 
-POLICY_VERSION = "claim-policy-5"
+POLICY_VERSION = "claim-policy-6"
 
 _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}

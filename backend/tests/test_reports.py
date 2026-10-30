@@ -146,7 +146,7 @@ def test_stored_configs_accept_rows_written_before_provenance_existed():
 def test_verification_run_config_comes_from_the_verifier():
     verifier = QwenClaimVerifier(FakeRunner(), VlmLimits())
     config = run_config(verifier, verifier_independent=False).model_dump(mode="json")
-    assert config["prompt_version"] == "qwen-verify-1" and config["policy_version"] == "claim-policy-5"
+    assert config["prompt_version"] == "qwen-verify-1" and config["policy_version"] == "claim-policy-6"
     assert config["verifier_independent"] is False and config["model"]["weights_sha256"] == "f" * 64
     with pytest.raises(TypeError):
         run_config(types.SimpleNamespace(model=ModelInfo("m", "1")), True)

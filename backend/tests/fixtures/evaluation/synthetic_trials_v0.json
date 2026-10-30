@@ -1,0 +1,24 @@
+{
+  "manifest_dataset_version": "synthetic-v0",
+  "source": "hand-written simulated verifier answers; no model was run",
+  "synthetic": true,
+  "verifier_independent": false,
+  "trials": {
+    "alpha-c01": {"integrity": "ok", "detection_match": "matches_claim", "raw_label": "supported"},
+    "alpha-c02": {"integrity": "ok", "detection_match": "inconclusive", "raw_label": "wrong_location"},
+    "alpha-c03": {"integrity": "ok", "detection_match": "conflicts_with_claim", "raw_label": "wrong_damage_type"},
+    "alpha-c04": {"integrity": "ok", "detection_match": "no_detection", "raw_label": "unverifiable"},
+    "alpha-c05": {"integrity": "ok", "detection_match": "not_applicable", "raw_label": "supported"},
+    "bravo-c01": {"integrity": "ok", "detection_match": "matches_claim", "raw_label": "supported"},
+    "bravo-c02": {"integrity": "ok", "detection_match": "not_applicable", "raw_label": "unsupported_severity"},
+    "bravo-c03": {"integrity": "ok", "detection_match": "not_applicable", "raw_label": "supported"},
+    "bravo-c04": {"integrity": "missing", "detection_match": "unavailable", "raw_label": "supported"},
+    "charlie-c01": {"integrity": "ok", "detection_match": "matches_claim", "raw_label": "supported"},
+    "charlie-c02": {"integrity": "ok", "detection_match": "no_detection", "raw_label": "unverifiable"},
+    "charlie-c03": {"integrity": "ok", "detection_match": "matches_claim", "raw_label": "supported"},
+    "charlie-c04": {"integrity": "ok", "detection_match": "not_applicable", "raw_label": "supported"},
+    "delta-c01": {"integrity": "ok", "detection_match": "matches_claim", "raw_label": "Supported"},
+    "delta-c02": {"integrity": "ok", "detection_match": "not_applicable", "raw_label": "contradicted"},
+    "delta-c03": {"integrity": "ok", "detection_match": "not_applicable", "raw_label": null, "verifier_errored": true}
+  }
+}

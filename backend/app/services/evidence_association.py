@@ -147,6 +147,10 @@ def _compare(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> t
         return (location if location is not None else _UNKNOWN), [loc_detail]
 
     if claim.claim_type is ClaimType.VISIBLE_DAMAGE_PRESENCE:
+        if claim.damage_type is not None and (
+            normalize_damage_type(claim.damage_type) != normalize_damage_type(facts.damage_type)
+        ):
+            return _UNKNOWN, [f"damage_type_mismatch:{pid}", loc_detail]
         details = [f"detection_present:{pid}", loc_detail]
         return (_MATCH if location in (None, _MATCH) else _UNKNOWN), details
 

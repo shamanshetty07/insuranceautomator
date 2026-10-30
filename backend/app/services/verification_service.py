@@ -98,9 +98,15 @@ def _ask_verifier(verifier: ClaimVerificationService, claim: ExtractedClaim, ev:
             True,
         )
     result = verdicts[0]
-    explanation = str(getattr(result, "explanation", "") or "")[:_MAX_EXPLANATION_CHARS]
     try:
-        label = VerificationLabel(getattr(result, "label", None))
+        explanation = str(getattr(result, "explanation", "") or "")[:_MAX_EXPLANATION_CHARS]
+        raw_label = getattr(result, "label", None)
+    except Exception:
+        logger.exception("Verifier result could not be read claim_id=%s", claim.claim_id)
+        return _Raw(None, VerifierOutcome(verdict=None, errored=True), "The verifier result could not be read.",
+                    True, True)
+    try:
+        label = VerificationLabel(raw_label)
     except ValueError:
         return _Raw(
             None,
