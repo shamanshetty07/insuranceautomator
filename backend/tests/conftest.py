@@ -9,6 +9,11 @@ import pytest
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if TEST_DATABASE_URL and TEST_DATABASE_URL == os.environ.get("DATABASE_URL"):
     raise RuntimeError("TEST_DATABASE_URL must differ from DATABASE_URL; tests wipe their database.")
+if TEST_DATABASE_URL:
+    from tests.db_safety import disposable_database_problem
+
+    if problem := disposable_database_problem(TEST_DATABASE_URL):
+        raise RuntimeError(problem)
 
 # Must run before app imports: without a test DB, use an unroutable URL so tests never touch a real one.
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "postgresql+psycopg://none:none@127.0.0.1:1/none"

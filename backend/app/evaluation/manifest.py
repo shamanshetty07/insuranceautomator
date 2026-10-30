@@ -2,17 +2,23 @@
 
 The manifest is the only source of gold labels. A label counts only when its annotation status
 is accepted by the caller (adjudicated by default); everything else is excluded, never guessed.
+Labels describe what the images show, never the physical state of the vehicle beyond them.
+
+Fields added after the first release (provenance, privacy_redacted, visibility, annotations,
+adjudication_method) are optional and omitted from serialization at their defaults, so manifests
+that do not use them validate and digest exactly as before.
 """
 
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from app.evaluation.records import GoldLabel
 from app.schemas.claims import MAX_CLAIM_TEXT_LENGTH, MAX_REFERENCES_PER_CLAIM, ClaimId, ClaimType, CropBox
@@ -21,11 +27,19 @@ from app.services.evidence_association import normalize_damage_type
 SCHEMA_VERSION = "1"
 MAX_IMAGES = 10_000
 MAX_CLAIMS = 100_000
+MAX_ANNOTATORS_PER_CLAIM = 10
 
 Slug = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 Sha256Hex = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 ImageQuality = Literal["ok", "blurry", "low_resolution", "occluded", "unknown"]
 AnnotationStatus = Literal["unannotated", "draft", "adjudicated", "disputed"]
+Visibility = Literal["clearly_visible", "partially_visible", "occluded", "out_of_frame", "not_assessable"]
+DamageVisibility = Literal["clearly_visible", "partially_visible"]
+SEEN_VISIBILITY: frozenset[str] = frozenset({"clearly_visible", "partially_visible"})
+AdjudicationMethod = Literal["unanimous", "discussion", "third_annotator"]
+SourceKind = Literal["own_photo", "contributed_with_consent", "licensed", "public_domain", "synthetic"]
+RecordRef = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")]
+LicenseId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$")]
 LABEL_BEARING_STATUSES: frozenset[str] = frozenset({"draft", "adjudicated"})
 ALL_STATUSES: frozenset[str] = frozenset({"unannotated", "draft", "adjudicated", "disputed"})
 AdversarialTag = Literal[
@@ -49,6 +63,16 @@ _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    _OMIT_AT_DEFAULT: ClassVar[tuple[str, ...]] = ()
+
+    @model_serializer(mode="wrap")
+    def _omit_new_defaults(self, handler: Any) -> Any:
+        data = handler(self)
+        for name in self._OMIT_AT_DEFAULT:
+            if getattr(self, name) == type(self).model_fields[name].default:
+                data.pop(name, None)
+        return data
+
 
 def _strip(v: object) -> object:
     return v.strip() if isinstance(v, str) else v
@@ -57,9 +81,12 @@ def _strip(v: object) -> object:
 class VisibleDamage(_Strict):
     """One damage instance a human can see in the image. Location is free text (see docs vocabulary)."""
 
+    _OMIT_AT_DEFAULT = ("visibility",)
+
     damage_type: str = Field(min_length=1, max_length=100)
     location: str = Field(min_length=1, max_length=200)
     bbox: CropBox | None = None
+    visibility: DamageVisibility | None = None
 
     @field_validator("damage_type", "location", mode="before")
     @classmethod
@@ -72,8 +99,28 @@ class VisibleDamage(_Strict):
         return normalize_damage_type(v)
 
 
+class Provenance(_Strict):
+    """Where an image came from and the record (kept outside the repository) that permits its use."""
+
+    source_kind: SourceKind
+    consent_or_license_ref: RecordRef | None = None
+    license_id: LicenseId | None = None
+    collected_at: date | None = None
+    contributor: Slug | None = None
+
+    @model_validator(mode="after")
+    def check_kind(self) -> "Provenance":
+        if self.source_kind == "licensed" and self.license_id is None:
+            raise ValueError("a licensed image must name its license_id")
+        if self.source_kind == "contributed_with_consent" and self.contributor is None:
+            raise ValueError("a contributed image must name its pseudonymous contributor")
+        return self
+
+
 class ManifestImage(_Strict):
     """One image: either produced by a named synthetic generator or a file relative to the dataset root."""
+
+    _OMIT_AT_DEFAULT = ("provenance", "privacy_redacted")
 
     fixture_id: Slug
     inspection_key: Slug
@@ -81,6 +128,8 @@ class ManifestImage(_Strict):
     sha256: Sha256Hex | None = None
     visible_damage: tuple[VisibleDamage, ...] = Field(default=(), max_length=100)
     image_quality: ImageQuality = "unknown"
+    provenance: Provenance | None = None
+    privacy_redacted: bool | None = None
 
     @property
     def is_synthetic(self) -> bool:
@@ -106,16 +155,54 @@ class ManifestImage(_Strict):
     def check_digest(self) -> "ManifestImage":
         if not self.is_synthetic and self.sha256 is None:
             raise ValueError("sha256 is required for file sources (optional only for synthetic generators)")
+        if self.provenance is not None and (self.provenance.source_kind == "synthetic") != self.is_synthetic:
+            raise ValueError("provenance source_kind 'synthetic' is required for, and only for, synthetic: sources")
+        return self
+
+
+def _check_visibility(label: GoldLabel | None, visibility: str | None, notes: str | None, where: str) -> None:
+    """A label may only say what the images show: supported/contradicted need the relevant region seen."""
+    if label is None or visibility is None or label is GoldLabel.UNVERIFIABLE:
+        return
+    if visibility not in SEEN_VISIBILITY:
+        raise ValueError(f"{where}: label '{label.value}' requires a visible region, not '{visibility}'")
+    if label is GoldLabel.CONTRADICTED and visibility == "partially_visible" and notes is None:
+        raise ValueError(f"{where}: 'contradicted' on a partially visible region needs notes explaining what is seen")
+
+
+class AnnotatorLabel(_Strict):
+    """One annotator's independent judgement of a claim, made blind to other labels and system outputs."""
+
+    annotator: Slug
+    label: GoldLabel | None
+    visibility: Visibility | None = None
+    annotated_at: datetime | None = None
+    notes: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, v: object) -> object:
+        return _strip(v)
+
+    @model_validator(mode="after")
+    def check_visibility(self) -> "AnnotatorLabel":
+        _check_visibility(self.label, self.visibility, self.notes, f"annotator {self.annotator}")
         return self
 
 
 class Annotation(_Strict):
-    """Who labelled the claim and how final it is. Annotator ids are pseudonymous slugs, never emails or names."""
+    """Who labelled the claim and how final it is. Annotator ids are pseudonymous slugs, never emails or names.
+
+    For adjudicated claims `annotator` is the adjudicator.
+    """
+
+    _OMIT_AT_DEFAULT = ("adjudication_method",)
 
     annotator: Slug | None = None
     status: AnnotationStatus
     annotated_at: datetime | None = None
     notes: str | None = Field(default=None, max_length=2000)
+    adjudication_method: AdjudicationMethod | None = None
 
     @field_validator("notes", mode="before")
     @classmethod
@@ -128,11 +215,15 @@ class Annotation(_Strict):
             raise ValueError("annotator is required unless status is 'unannotated'")
         if self.notes == "":
             raise ValueError("notes must not be empty when given")
+        if self.adjudication_method is not None and self.status != "adjudicated":
+            raise ValueError("adjudication_method is only allowed when status is 'adjudicated'")
         return self
 
 
 class ManifestClaim(_Strict):
     """One report claim to evaluate, the images it cites, and its (optional) gold label."""
+
+    _OMIT_AT_DEFAULT = ("visibility", "annotations")
 
     claim_key: ClaimId
     inspection_key: Slug
@@ -143,6 +234,8 @@ class ManifestClaim(_Strict):
     adversarial_tag: AdversarialTag | None = None
     label: GoldLabel | None = None
     annotation: Annotation
+    visibility: Visibility | None = None
+    annotations: tuple[AnnotatorLabel, ...] = Field(default=(), max_length=MAX_ANNOTATORS_PER_CLAIM)
 
     @field_validator("text", "damage_type", mode="before")
     @classmethod
@@ -163,7 +256,25 @@ class ManifestClaim(_Strict):
             raise ValueError(f"label must be null when annotation status is '{status}'")
         if status == "adjudicated" and self.label is None:
             raise ValueError("an adjudicated claim must carry a label")
+        _check_visibility(self.label, self.visibility, self.annotation.notes, f"claim {self.claim_key}")
+        self._check_annotations()
         return self
+
+    def _check_annotations(self) -> None:
+        ids = [a.annotator for a in self.annotations]
+        if len(set(ids)) != len(ids):
+            raise ValueError("each annotator may label a claim only once")
+        if self.annotations and self.annotation.status == "unannotated":
+            raise ValueError("a claim with annotator labels cannot have status 'unannotated'")
+        method = self.annotation.adjudication_method
+        if self.annotation.status == "adjudicated" and len(ids) >= 2 and method is None:
+            raise ValueError("an adjudicated claim with two or more annotator labels must state adjudication_method")
+        if method == "unanimous":
+            labels = {a.label for a in self.annotations}
+            if len(ids) < 2 or labels != {self.label}:
+                raise ValueError("'unanimous' needs two or more annotator labels all equal to the adjudicated label")
+        if method == "third_annotator" and self.annotation.annotator in ids:
+            raise ValueError("a 'third_annotator' adjudicator must not be one of the claim's annotators")
 
 
 class Manifest(_Strict):
@@ -199,7 +310,15 @@ class Manifest(_Strict):
         keys = [c.claim_key for c in self.claims]
         if len(set(keys)) != len(keys):
             raise ValueError("claim_key values must be unique")
+        inspection_of_digest: dict[str, str] = {}
         for img in self.images:
+            if img.sha256 is not None:
+                other = inspection_of_digest.setdefault(img.sha256, img.inspection_key)
+                if other != img.inspection_key:
+                    raise ValueError(f"image {img.fixture_id}: the same file appears in inspections {other} and "
+                                     f"{img.inspection_key}, which would leak across splits")
+            if not self.is_synthetic:
+                _check_real_image(img)
             if self.is_synthetic and not img.is_synthetic:
                 raise ValueError(f"synthetic manifest image {img.fixture_id} must use a synthetic: source")
             if not self.is_synthetic and img.is_synthetic:
@@ -222,6 +341,17 @@ class Manifest(_Strict):
                     "only allowed with adversarial_tag 'cross_inspection_reference'"
                 )
         return self
+
+
+def _check_real_image(img: ManifestImage) -> None:
+    prov = img.provenance
+    if prov is None or prov.source_kind == "synthetic" or prov.consent_or_license_ref is None:
+        raise ValueError(
+            f"real manifest image {img.fixture_id} needs provenance with a non-synthetic source_kind "
+            "and a consent_or_license_ref"
+        )
+    if img.privacy_redacted is not True:
+        raise ValueError(f"real manifest image {img.fixture_id} must be privacy_redacted (plates, faces, people)")
 
 
 def gold_labels(
@@ -299,3 +429,54 @@ def split_by_inspection(manifest: Manifest, *, test_fraction: float = 0.3, salt:
         dev_claims=tuple(c.claim_key for c in manifest.claims if assign[c.inspection_key] == "dev"),
         test_claims=tuple(c.claim_key for c in manifest.claims if assign[c.inspection_key] == "test"),
     )
+
+
+@dataclass(frozen=True)
+class AgreementInputs:
+    """Paired independent labels of two annotators; feed `confusion` to metrics.cohens_kappa.
+
+    Rows are annotator_a, columns annotator_b, both in GoldLabel declaration order. Claims where
+    either annotator gave no label (absent or abstained) are listed in `excluded`, not counted.
+    """
+
+    annotator_a: str
+    annotator_b: str
+    pairs: tuple[tuple[str, GoldLabel, GoldLabel], ...]
+    excluded: tuple[str, ...]
+
+    @property
+    def confusion(self) -> tuple[tuple[int, ...], ...]:
+        order = list(GoldLabel)
+        counts = [[0] * len(order) for _ in order]
+        for _, a, b in self.pairs:
+            counts[order.index(a)][order.index(b)] += 1
+        return tuple(tuple(row) for row in counts)
+
+    @property
+    def observed_agreement(self) -> float | None:
+        return sum(a is b for _, a, b in self.pairs) / len(self.pairs) if self.pairs else None
+
+
+def annotator_ids(manifest: Manifest) -> tuple[str, ...]:
+    return tuple(sorted({a.annotator for c in manifest.claims for a in c.annotations}))
+
+
+def agreement_inputs(
+    manifest: Manifest, annotator_a: str, annotator_b: str, *, claim_keys: Iterable[str] | None = None
+) -> AgreementInputs:
+    """Pre-adjudication label pairs for inter-annotator agreement, optionally restricted to some claims."""
+    if annotator_a == annotator_b:
+        raise ValueError("agreement needs two different annotators")
+    wanted = None if claim_keys is None else frozenset(claim_keys)
+    pairs: list[tuple[str, GoldLabel, GoldLabel]] = []
+    excluded: list[str] = []
+    for claim in manifest.claims:
+        if wanted is not None and claim.claim_key not in wanted:
+            continue
+        by = {a.annotator: a.label for a in claim.annotations}
+        a, b = by.get(annotator_a), by.get(annotator_b)
+        if a is None or b is None:
+            excluded.append(claim.claim_key)
+        else:
+            pairs.append((claim.claim_key, a, b))
+    return AgreementInputs(annotator_a, annotator_b, tuple(pairs), tuple(excluded))
