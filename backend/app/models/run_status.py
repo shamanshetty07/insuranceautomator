@@ -4,11 +4,7 @@ from sqlalchemy import Enum
 
 
 class RunStatus(str, enum.Enum):
-    """Lifecycle of a detection or verification run.
-
-    pending -> running -> completed | failed. completed_at is set exactly when a
-    run reaches completed or failed (enforced by a CHECK constraint).
-    """
+    """Lifecycle of a detection or verification run."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -28,6 +24,5 @@ def run_status_type(name: str) -> Enum:
     )
 
 
-# SQL fragment shared by the completed_at CHECK constraints.
 COMPLETED_AT_CHECK = "(status IN ('completed', 'failed')) = (completed_at IS NOT NULL)"
 SHA256_HEX_CHECK = "{col} ~ '^[0-9a-f]{{64}}$'"

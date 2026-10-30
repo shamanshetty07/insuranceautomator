@@ -1,12 +1,4 @@
-"""Local YOLO inference through the optional `ultralytics` package.
-
-The package is imported lazily, so the app (and every test that does not exercise a
-real model) works without it installed: `pip install -e ".[detection]"`.
-Ultralytics is licensed AGPL-3.0; see docs/architecture.md before distributing.
-
-Images never leave the process: the package is forced offline before import, which
-disables its usage telemetry, weight auto-downloads and pip auto-installs.
-"""
+"""Local YOLO inference through the optional `ultralytics` package."""
 
 import hashlib
 import hmac
@@ -27,14 +19,11 @@ from app.services.types import Detection, ImageRef, ModelInfo
 
 logger = logging.getLogger(__name__)
 
-# Ultralytics models keep mutable predictor state and are not safe to call from
-# several threads at once; FastAPI runs sync routes in a thread pool.
+# Ultralytics models are not thread-safe; FastAPI runs sync routes in a thread pool.
 _INFERENCE_LOCK = threading.Lock()
 
-_MAX_CLASS_NAME_LENGTH = 100  # damage_predictions.damage_type is VARCHAR(100)
+_MAX_CLASS_NAME_LENGTH = 100
 
-# Trained weights only: Ultralytics turns a model definition (.yaml) into a randomly
-# initialised network, which would produce meaningless detections.
 WEIGHTS_SUFFIXES = frozenset({".pt"})
 
 _SIXTEEN_BIT_MODES = frozenset({"I;16", "I;16B", "I;16L", "I"})
@@ -45,8 +34,7 @@ def is_weights_file(path: Path) -> bool:
 
 
 def to_rgb(image: Image.Image) -> Image.Image:
-    """RGB for the model. 16-bit greyscale is scaled down first: a plain convert("RGB")
-    clips every value above 255 to white."""
+    """RGB for the model."""
     if image.mode in _SIXTEEN_BIT_MODES:
         image = image.convert("I").point(lambda v: v / 256).convert("L")
     return image.convert("RGB")
@@ -73,12 +61,7 @@ class UnsafeLoadRefused(RuntimeError):
 
 
 def verify_weights_digest(actual: str, expected: str | None) -> None:
-    """Refuse weights whose SHA-256 differs from the configured pin (checked before loading).
-
-    Without a pin any .pt file is accepted, as before; that is logged so it is visible.
-    The file is read again by the loader after hashing (time-of-check gap, P2-O-4), so
-    the pin protects against a wrong or swapped file, not a concurrent local writer.
-    """
+    """Refuse weights whose SHA-256 differs from the configured pin (checked before loading)."""
     if expected is None:
         logger.warning("No DETECTOR_WEIGHTS_SHA256 pin configured; loading unpinned weights sha256=%s", actual)
         return
@@ -87,27 +70,13 @@ def verify_weights_digest(actual: str, expected: str | None) -> None:
 
 
 def apply_safe_load(enabled: bool) -> None:
-    """Request Ultralytics' restricted checkpoint loading (weights_only + class allow-list).
-
-    Only a request: Ultralytics reads ULTRALYTICS_SAFE_LOAD once, when `ultralytics.utils`
-    is first imported (8.4.191: utils/__init__.py:81, copied into nn/tasks.py at import).
-    `confirm_safe_load_active` must check after the import whether it took effect.
-    When disabled this leaves the environment untouched.
-    """
+    """Request Ultralytics' restricted checkpoint loading (weights_only + class allow-list)."""
     if enabled:
         os.environ["ULTRALYTICS_SAFE_LOAD"] = "1"
 
 
 def confirm_safe_load_active() -> None:
-    """Raise UnsafeLoadRefused unless the next checkpoint load really is restricted.
-
-    Reads Ultralytics' own resolved state, not the environment variable (verified
-    against the 8.4.191 source; any other layout fails closed):
-    - ultralytics.nn.tasks.SAFE_LOAD is True: False if Ultralytics was imported before
-      the flag was set, in this process, by anything.
-    - ultralytics.nn.tasks._SafeLoad.SUPPORTED is True: False on torch < 2.6, where
-      torch_safe_load silently degrades to an unrestricted torch.load.
-    """
+    """Raise UnsafeLoadRefused unless the next checkpoint load really is restricted."""
     try:
         tasks = importlib.import_module("ultralytics.nn.tasks")
     except Exception as exc:
@@ -154,11 +123,7 @@ def _clamp01(value: float) -> float:
 def detections_from_result(
     image_id: uuid.UUID, result: Any, names: Mapping[int, str]
 ) -> list[Detection]:
-    """Convert one Ultralytics `Results` object into Detection values.
-
-    Uses `boxes.xyxyn` (normalized to the input image, origin top-left, y down),
-    clamps to [0, 1] and drops degenerate or non-finite boxes.
-    """
+    """Convert one Ultralytics `Results` object into Detection values."""
     boxes = getattr(result, "boxes", None)
     if boxes is None:
         return []
@@ -202,7 +167,7 @@ class UltralyticsDetector:
         *, safe_load: bool = False, expected_sha256: str | None = None,
     ) -> None:
         if not is_weights_file(weights_path):
-            # Checked before loading: given a missing path, Ultralytics would try to download it.
+            # Checked first: given a missing path, Ultralytics would try to download it.
             raise FileNotFoundError("weights file is missing, not a regular file, or not a .pt file")
         weights_sha256 = file_sha256(weights_path)
         verify_weights_digest(weights_sha256, expected_sha256)
@@ -234,8 +199,6 @@ class UltralyticsDetector:
     def detect(self, images: list[ImageRef]) -> list[Detection]:
         detections: list[Detection] = []
         for ref in images:
-            # Decode with Pillow (as at upload) so boxes are relative to exactly the
-            # stored, orientation-normalized pixels.
             with Image.open(ref.path) as img:
                 rgb = to_rgb(img)
             with _INFERENCE_LOCK:

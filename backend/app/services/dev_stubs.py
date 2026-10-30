@@ -1,9 +1,4 @@
-"""DEVELOPMENT/TEST-ONLY deterministic test doubles. These are NOT AI.
-
-Nothing here inspects pixels or uses a model; outputs are fixed functions of the inputs.
-These stubs must never be wired into production code paths. Every ModelInfo name starts
-with "stub-" and every class sets IS_STUB = True so they are easy to detect and refuse.
-"""
+"""DEVELOPMENT/TEST-ONLY deterministic test doubles. These are NOT AI."""
 
 import re
 import uuid
@@ -19,7 +14,10 @@ from app.schemas.claims import (
     StructuredReport,
     CropBox,
 )
+from app.schemas.runs import GenerationConfig, SamplingParams, VerificationConfig
 from app.services.types import ClaimVerdict, EvidenceBundle, ModelInfo, ReportClaim
+
+_STUB_SAMPLING = SamplingParams(temperature=0, top_p=1, max_new_tokens=1)
 
 
 class StubVerifierError(RuntimeError):
@@ -27,13 +25,11 @@ class StubVerifierError(RuntimeError):
 
 
 class StubStructuredReportGenerator:
-    """Deterministic test double (not AI); never wire into production.
-
-    Implements StructuredReportGenerationService and ReportGenerationService.
-    """
+    """Deterministic test double (not AI); never wire into production."""
 
     IS_STUB = True
     model = ModelInfo("stub-generator", "0")
+    generation_config = GenerationConfig(prompt_version="stub-generator-1", sampling=_STUB_SAMPLING)
 
     def __init__(
         self,
@@ -75,7 +71,7 @@ class StubStructuredReportGenerator:
         seen: dict[uuid.UUID, int] = {}
         for det in evidence.detections:
             if det.image_id not in index:
-                continue  # never cite ids outside the evidence
+                continue
             k = seen.get(det.image_id, 0)
             seen[det.image_id] = k + 1
             crop = None
@@ -110,13 +106,11 @@ class StubStructuredReportGenerator:
 
 
 class StubClaimVerifier:
-    """Deterministic test double (not AI); never wire into production.
-
-    Implements ClaimVerificationService. Records every call in `calls`.
-    """
+    """Deterministic test double (not AI); never wire into production."""
 
     IS_STUB = True
     model = ModelInfo("stub-verifier", "0")
+    verification_config = VerificationConfig(prompt_version="stub-verifier-1", sampling=_STUB_SAMPLING)
 
     def __init__(
         self,

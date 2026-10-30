@@ -1,8 +1,4 @@
-"""Test setup. DB tests need TEST_DATABASE_URL pointing at a dedicated, disposable database.
-
-The schema is built with Alembic (so migrations are exercised) and the app is never
-pointed at DATABASE_URL while tests run.
-"""
+"""Test setup. DB tests need TEST_DATABASE_URL pointing at a dedicated, disposable database."""
 
 import os
 from collections.abc import Iterator
@@ -14,8 +10,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if TEST_DATABASE_URL and TEST_DATABASE_URL == os.environ.get("DATABASE_URL"):
     raise RuntimeError("TEST_DATABASE_URL must differ from DATABASE_URL; tests wipe their database.")
 
-# Must be set before app modules are imported. Without a test DB, point at an
-# unroutable URL so no test can ever touch a real database by accident.
+# Must run before app imports: without a test DB, use an unroutable URL so tests never touch a real one.
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "postgresql+psycopg://none:none@127.0.0.1:1/none"
 os.environ["APP_ENV"] = "test"
 

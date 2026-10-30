@@ -70,7 +70,7 @@ def test_cleanup_failure_is_logged_with_the_orphan_path(
     with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="db down"):
         _upload(db_session, storage, test_settings, inspection)
     orphan = _files(storage)
-    assert len(orphan) == 1  # still there, and the log says where
+    assert len(orphan) == 1
     assert any(orphan[0].name in r.getMessage() and "reconciliation" in r.getMessage() for r in caplog.records)
 
 
@@ -97,10 +97,10 @@ def test_file_delete_failure_after_commit_is_logged_and_recoverable(
     monkeypatch.setattr(storage, "delete", lambda p: (_ for _ in ()).throw(OSError("busy")))
     with caplog.at_level(logging.ERROR):
         image_service.delete_image(db_session, storage, inspection.id, image.id)
-    assert db_session.get(InspectionImage, image.id) is None  # row is gone
+    assert db_session.get(InspectionImage, image.id) is None
     assert any(path in r.getMessage() for r in caplog.records)
     monkeypatch.undo()
-    assert reconcile(db_session, storage).orphaned_files == [path]  # recoverable via the report
+    assert reconcile(db_session, storage).orphaned_files == [path]
 
 
 def test_delete_inspection_removes_rows_then_files(db_session, storage, test_settings, inspection):
@@ -160,6 +160,6 @@ def test_truly_concurrent_uploads_serialize(db_engine, storage, test_settings, i
         results = list(pool.map(attempt, range(5)))
 
     orders = sorted(r for r in results if isinstance(r, int))
-    assert orders == [0, 1, 2]  # limit is 3: unique orders, none over the limit
+    assert orders == [0, 1, 2]
     assert results.count("image_limit_reached") == 2
-    assert len(_files(storage)) == 3  # rejected uploads left no files
+    assert len(_files(storage)) == 3

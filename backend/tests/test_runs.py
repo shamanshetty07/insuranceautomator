@@ -29,7 +29,7 @@ def test_image_can_have_multiple_runs_with_own_predictions(db_session: Session):
     img = make_image(insp)
     run_a = make_run(img, "1", config={"confidence_threshold": 0.25})
     run_b = make_run(img, "2", config={"confidence_threshold": 0.5}, weights_sha256=SHA)
-    empty = make_run(img, "3")  # a run may legitimately produce zero predictions
+    empty = make_run(img, "3")
     make_prediction(run_a), make_prediction(run_a, damage_type="scratch"), make_prediction(run_b)
     db_session.add_all([insp, img, run_a, run_b, empty])
     db_session.commit()
@@ -92,7 +92,6 @@ def test_verification_runs_do_not_mix_results(db_session: Session):
     insp = Inspection()
     report = make_report(insp)
     run_1, run_2 = make_vrun(report, "1"), make_vrun(report, "2")
-    # Same claim verified twice, with different outcomes.
     r1 = make_result(run_1, "Dent on left door", VerificationLabel.SUPPORTED)
     r2 = make_result(run_2, "Dent on left door", VerificationLabel.WRONG_LOCATION)
     r3 = make_result(run_2, "Missed scratch on hood", VerificationLabel.OMITTED_DAMAGE)
@@ -104,7 +103,6 @@ def test_verification_runs_do_not_mix_results(db_session: Session):
     assert {r.verification_label for r in run_2.results} == {
         VerificationLabel.WRONG_LOCATION, VerificationLabel.OMITTED_DAMAGE,
     }
-    # Deleting one run leaves the other run's results intact.
     db_session.delete(run_2)
     db_session.commit()
     assert db_session.query(VerificationResult).all() == [r1]
@@ -152,12 +150,12 @@ def test_prediction_used_by_a_report_cannot_be_deleted_alone(db_session: Session
         db_session.commit()
     db_session.rollback()
 
-    db_session.delete(run)  # cascades to the prediction, so is blocked too
+    db_session.delete(run)
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
 
-    db_session.delete(insp)  # but deleting the whole inspection is fine
+    db_session.delete(insp)
     db_session.commit()
     assert db_session.query(DetectionRun).count() == 0
 
@@ -166,7 +164,7 @@ def test_run_config_schemas():
     DetectionConfig(confidence_threshold=0.25, iou_threshold=0.7, image_size=640, max_detections=100)
     with pytest.raises(ValidationError):
         DetectionConfig(confidence_threshold=1.5, iou_threshold=0.7, image_size=640, max_detections=100)
-    with pytest.raises(ValidationError):  # unknown keys are rejected, not silently stored
+    with pytest.raises(ValidationError):
         DetectionConfig(
             confidence_threshold=0.25, iou_threshold=0.7, image_size=640, max_detections=100, typo=1
         )

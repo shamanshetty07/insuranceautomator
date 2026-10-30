@@ -1,8 +1,4 @@
-"""Optional end-to-end check with a real Ultralytics install and real weights.
-
-Skipped unless `ultralytics` is importable and DETECTOR_TEST_WEIGHTS points at a
-trusted local weights file (.pt files are pickles: loading one executes code).
-"""
+"""Optional end-to-end check with a real Ultralytics install and real weights."""
 
 import importlib.util
 import os

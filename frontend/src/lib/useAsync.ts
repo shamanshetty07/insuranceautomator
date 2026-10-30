@@ -5,7 +5,6 @@ export type AsyncState<T> =
   | { status: "error"; error: Error }
   | { status: "success"; data: T };
 
-/** Runs `fn` on mount and whenever `reload` is called; ignores stale results. */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
   const [state, setState] = useState<AsyncState<T>>({ status: "loading" });
   const [tick, setTick] = useState(0);

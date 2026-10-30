@@ -12,15 +12,7 @@ if TYPE_CHECKING:
 
 
 class ReportPrediction(Base):
-    """The exact predictions a report was generated from (canonical provenance).
-
-    Deleting a report removes its links. Deleting a prediction (or its run) that a
-    report still uses is refused at commit (the FK is DEFERRABLE INITIALLY DEFERRED,
-    NO ACTION), so provenance cannot silently vanish. Deleting the whole inspection
-    works because the reports and links go in the same transaction, in any order.
-    Invariant for the service layer (not expressible as a simple FK): linked
-    predictions must belong to the report's own inspection.
-    """
+    """The exact predictions a report was generated from (canonical provenance)."""
 
     __tablename__ = "report_predictions"
 

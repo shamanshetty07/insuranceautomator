@@ -2,10 +2,7 @@ import type { BoundingBox } from "../../types/api";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
-/**
- * CSS placement for a normalized box over an element that exactly covers the stored
- * image (boxes are relative to the stored, EXIF-normalized pixels; origin top-left).
- */
+// Boxes are relative to the stored, EXIF-normalized pixels.
 export function boxStyle(box: BoundingBox) {
   const x0 = clamp01(box.x_min);
   const y0 = clamp01(box.y_min);

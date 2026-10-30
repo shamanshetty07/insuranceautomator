@@ -40,10 +40,7 @@ def run_detection(
     settings: AppSettings,
     body: Annotated[DetectionRequest | None, Body()] = None,
 ) -> DetectionRunList:
-    """Run detection synchronously, one run per image (omit image_ids for all images).
-
-    A per-image failure is returned as a `failed` run; the request still succeeds.
-    """
+    """Run detection synchronously, one run per image (omit image_ids for all images)."""
     runs = detection_service.run_detection(
         db,
         storage,

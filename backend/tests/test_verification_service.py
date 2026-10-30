@@ -9,10 +9,9 @@ import pytest
 from sqlalchemy import select
 
 from app.core.errors import AppError
-from app.models import GeneratedReport, Inspection, VerificationLabel, VerificationResult
+from app.models import GeneratedReport, Inspection, ReportClaim, VerificationLabel, VerificationResult
 from app.models.run_status import RunStatus
 from app.schemas.claims import (
-    ClaimExtractionResult,
     ClaimType,
     EvidenceRecord,
     ExtractedClaim,
@@ -29,6 +28,7 @@ from app.services.claim_policy import (
     ReasonCode,
 )
 from app.services.evidence_association import ClaimEvidence
+from app.services.report_claims import claim_row_values
 from app.services.dev_stubs import StubClaimVerifier, StubStructuredReportGenerator
 from app.services.types import ClaimVerdict, Detection, EvidenceBundle, ImageRef, ModelInfo
 from app.services.verification_service import (
@@ -44,9 +44,6 @@ CONFIG = VerificationConfig(
     prompt_version="stub-1", sampling=SamplingParams(temperature=0, top_p=1, max_new_tokens=1)
 )
 BOX = {"x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
-
-
-# ---- pure tests (no database) ------------------------------------------------------------
 
 
 def test_evidence_record_literals_match_policy_enums():
@@ -68,8 +65,6 @@ def test_frozen_migration_check_lists_match_current_enums():
     assert module.CLAIM_TYPES == tuple(m.value for m in ClaimType)
     assert module.VERDICTS == tuple(m.value for m in Verdict)
 
-
-# ---- omitted_damage regression and label handling (no database) ---------------------------
 
 _IMG = uuid.UUID("00000000-0000-0000-0000-00000000000b")
 _CK_OMITTED = "verification_label IS DISTINCT FROM 'omitted_damage' OR verdict IS NULL"
@@ -97,7 +92,7 @@ class _OneLabel:
     model = ModelInfo(name="stub-one-label", version="0")
 
     def __init__(self, labels):
-        self.labels = labels  # claim text -> label
+        self.labels = labels
 
     def verify(self, claims, evidence):
         return [ClaimVerdict(c.text, self.labels[c.text], "said so") for c in claims]
@@ -122,20 +117,16 @@ def _row_for(label, det=DetectionMatch.MATCHES_CLAIM):
 
 
 def test_regression_omitted_damage_label_builds_a_row_the_database_accepts():
-    # Before the fix: verification_label=omitted_damage with verdict=insufficient_evidence,
-    # which ck_verification_results_omitted_has_no_verdict rejects at commit.
     row = _row_for("omitted_damage")
     assert _db_check_violations(row) == []
-    assert row.verification_label is None  # an omission finding is not this claim's raw label
+    assert row.verification_label is None
     assert row.verdict is Verdict.INSUFFICIENT_EVIDENCE and row.needs_human_review
     assert row.policy_reason_codes == [ReasonCode.VERIFIER_INVALID.value]
-    assert "omitted_damage" in row.explanation  # what the verifier said is still recorded
+    assert "omitted_damage" in row.explanation
 
 
 @pytest.mark.parametrize("det", list(DetectionMatch))
 def test_regression_unverifiable_label_is_stored_for_review(det):
-    # Before claim-policy-3 the stored row had needs_human_review=False, so a verifier's
-    # "can't tell" left the review queue, even when detection conflicted with the claim.
     row = _row_for("unverifiable", det)
     assert _db_check_violations(row) == []
     assert row.verification_label.value == "unverifiable"
@@ -143,7 +134,6 @@ def test_regression_unverifiable_label_is_stored_for_review(det):
     assert row.policy_reason_codes == [ReasonCode.VERIFIER_INSUFFICIENT.value]
 
 
-# label -> (stored raw label, verdict, review, reason) with a corroborating detection.
 LABEL_ROWS = {
     "supported": ("supported", Verdict.SUPPORTED, False, ReasonCode.VERIFIER_SUPPORTED),
     "contradicted": ("contradicted", Verdict.INSUFFICIENT_EVIDENCE, True,
@@ -191,7 +181,7 @@ class _CheckingSession:
         bad = [v for r in self.pending for v in _db_check_violations(r)]
         if bad:
             self.pending.clear()
-            raise RuntimeError(f"IntegrityError: {bad}")  # the whole transaction is lost
+            raise RuntimeError(f"IntegrityError: {bad}")
         self.saved.extend(self.pending)
         self.pending.clear()
 
@@ -211,8 +201,8 @@ def test_regression_one_omitted_label_no_longer_loses_the_whole_run(monkeypatch)
 
     vs._execute(db, None, verifier, uuid.uuid4(), uuid.uuid4(), claims)
 
-    assert failed == []  # the run was not failed with SAVE_FAILED_MESSAGE
-    assert [r.claim_id for r in db.saved] == ["ok", "odd", "ok2"]  # nothing dropped
+    assert failed == []
+    assert [r.claim_id for r in db.saved] == ["ok", "odd", "ok2"]
     assert [r.verdict for r in db.saved] == [Verdict.SUPPORTED, Verdict.INSUFFICIENT_EVIDENCE, Verdict.SUPPORTED]
     run_update = str(db.run_updates[0].compile()).lower()
     assert "update verification_runs" in run_update and "verification_runs.status" in run_update
@@ -235,9 +225,6 @@ def test_a_save_failure_still_fails_the_run_accurately_and_keeps_no_partial_rows
     assert failed == [vs.SAVE_FAILED_MESSAGE] and db.saved == []
 
 
-# ---- database-backed orchestration -------------------------------------------------------
-
-
 class World:
     def __init__(self, db, storage):
         self.db, self.storage = db, storage
@@ -247,11 +234,12 @@ class World:
         db.flush()
         self.image = add_image(db, storage, self.inspection)
         _, (self.prediction,) = add_run(db, self.image, preds=1)
-        self.prediction.bounding_box = BOX  # a "dent" at BOX
+        self.prediction.bounding_box = BOX
         self.report = make_report(self.inspection)
         self.report.content = "original report text"
         db.add(self.report)
         db.commit()
+        self._report_used = False
 
     def claim(self, cid, ctype, images=(), preds=(), text=None, damage_type=None):
         return ExtractedClaim(
@@ -263,15 +251,22 @@ class World:
             prediction_ids=list(preds),
         )
 
-    def run(self, claims, verifier, report_id=None, result_report_id=None):
-        return verify_report(
-            self.db,
-            self.storage,
-            verifier,
-            report_id or self.report.id,
-            ClaimExtractionResult(report_id=result_report_id, claims=claims),
-            CONFIG,
-        )
+    def store(self, claims):
+        """Persist claims as report_claims (the first call uses world.report, later ones a new report)."""
+        if self._report_used:
+            report = make_report(self.inspection)
+            self.db.add(report)
+            self.db.flush()
+        else:
+            report, self._report_used = self.report, True
+        for position, claim in enumerate(claims):
+            self.db.add(ReportClaim(generated_report_id=report.id, **claim_row_values(claim, position)))
+        self.db.commit()
+        return report
+
+    def run(self, claims, verifier, report_id=None):
+        """Store `claims` on a report, then verify that report's stored claims."""
+        return verify_report(self.db, self.storage, verifier, report_id or self.store(claims).id)
 
     def results(self, run):
         rows = self.db.scalars(
@@ -295,7 +290,7 @@ def test_generator_to_verified_results_end_to_end(world):
         detections=[Detection(image_id=world.image.id, damage_type="dent", confidence=0.9, bounding_box=BOX)],
     )
     structured = generator.generate_structured(evidence)
-    verifier = StubClaimVerifier()  # every checkable claim: supported
+    verifier = StubClaimVerifier()
 
     run = world.run(structured.claims.claims, verifier)
 
@@ -303,42 +298,37 @@ def test_generator_to_verified_results_end_to_end(world):
     assert run.status is RunStatus.COMPLETED and run.completed_at is not None
     assert run.error_message is None
     assert run.verifier_model == "stub-verifier" and run.config["policy_version"] == POLICY_VERSION
-    # one result per claim, none dropped
     assert set(rows) == {c.claim_id for c in structured.claims.claims}
 
     presence = next(c for c in structured.claims.claims if c.claim_type is ClaimType.VISIBLE_DAMAGE_PRESENCE)
     typed = next(c for c in structured.claims.claims if c.claim_type is ClaimType.DAMAGE_TYPE)
-    # the presence claim cites the image but not its detection: not comparable -> review
     assert rows[presence.claim_id].verdict is Verdict.SUPPORTED
     assert rows[presence.claim_id].needs_human_review is True
     assert rows[presence.claim_id].policy_reason_codes == [ReasonCode.DETECTION_INCONCLUSIVE.value]
-    assert rows[typed.claim_id].needs_human_review is False  # same class, same place
+    assert rows[typed.claim_id].needs_human_review is False
     assert rows[typed.claim_id].verdict is Verdict.SUPPORTED
     assert rows[typed.claim_id].verification_label is VerificationLabel.SUPPORTED
     record = EvidenceRecord.model_validate(rows[typed.claim_id].evidence_reference)
     assert record.prediction_ids == (world.prediction.id,) and record.detection_match == "matches_claim"
 
-    # claims the pixels cannot establish are stored, not dropped, and never reach the verifier
     for ctype in (ClaimType.DAMAGE_SEVERITY, ClaimType.HIDDEN_STRUCTURAL_DAMAGE, ClaimType.REPAIR_COST):
         row = next(r for r in rows.values() if r.claim_type is ctype)
         assert row.verdict is Verdict.INSUFFICIENT_EVIDENCE and row.needs_human_review is True
         assert row.verification_label is None and row.explanation.startswith("Verifier not called")
     called = {text for texts, _ in verifier.calls for text in texts}
     assert called == {presence.text, typed.text}
-    # the verifier saw only the cited original image, never the report
     assert all(ids == (str(world.image.id),) for _, ids in verifier.calls)
     assert world.db.get(GeneratedReport, world.report.id).content == "original report text"
 
 
 @requires_db
 def test_raw_verifier_label_is_kept_apart_from_policy_verdict(world):
-    # verifier says contradicted, but the cited detection is a dent: disagreement -> review
     claim = world.claim("c1", ClaimType.DAMAGE_TYPE, [world.image.id], [world.prediction.id], "dent on door",
                         damage_type="dent")
     verifier = StubClaimVerifier(labels={"dent on door": "contradicted"})
     row = world.results(world.run([claim], verifier))["c1"]
-    assert row.verification_label is VerificationLabel.CONTRADICTED  # raw
-    assert row.verdict is Verdict.INSUFFICIENT_EVIDENCE and row.needs_human_review  # final
+    assert row.verification_label is VerificationLabel.CONTRADICTED
+    assert row.verdict is Verdict.INSUFFICIENT_EVIDENCE and row.needs_human_review
     assert row.policy_reason_codes == [ReasonCode.DETECTION_MATCHES_CONTRADICTED.value]
 
 
@@ -353,11 +343,9 @@ def test_visual_contradiction_without_corroborating_detection_needs_review(world
 
 @requires_db
 def test_contradiction_with_a_conflicting_detection_still_needs_review(world):
-    # The claim says scratch and cites a detection classed as dent at the same place.
     claim = world.claim("c1", ClaimType.DAMAGE_TYPE, [world.image.id], [world.prediction.id], "scratch",
                         damage_type="scratch")
     row = world.results(world.run([claim], StubClaimVerifier(labels={"scratch": "wrong_damage_type"})))["c1"]
-    # claim-policy-4: a conflict is built from generator-written fields, so not final alone
     assert row.verdict is Verdict.CONTRADICTED and row.needs_human_review is True
     assert row.policy_reason_codes == [ReasonCode.DETECTION_CONFLICT_UNCONFIRMED.value]
     record = EvidenceRecord.model_validate(row.evidence_reference)
@@ -382,7 +370,7 @@ def test_regression_omitted_damage_label_keeps_every_result_in_the_database(worl
 def test_label_without_a_factual_verdict_fails_closed(world):
     claim = world.claim("c1", ClaimType.VISIBLE_DAMAGE_PRESENCE, [world.image.id], text="dent")
     row = world.results(world.run([claim], StubClaimVerifier(labels={"dent": "unsupported_severity"})))["c1"]
-    assert row.verification_label is VerificationLabel.UNSUPPORTED_SEVERITY  # raw kept
+    assert row.verification_label is VerificationLabel.UNSUPPORTED_SEVERITY
     assert row.verdict is Verdict.INSUFFICIENT_EVIDENCE and row.needs_human_review
     assert row.policy_reason_codes == [ReasonCode.VERIFIER_INVALID.value]
 
@@ -405,7 +393,7 @@ def test_one_verifier_exception_fails_that_claim_only(world):
     assert rows["c1"].verdict is Verdict.SUPPORTED
     assert rows["c2"].verdict is Verdict.INSUFFICIENT_EVIDENCE and rows["c2"].needs_human_review
     assert rows["c2"].policy_reason_codes == [ReasonCode.VERIFIER_ERROR.value]
-    assert "boom" not in rows["c2"].explanation  # no verifier internals leak into the record
+    assert "boom" not in rows["c2"].explanation
 
 
 @requires_db
@@ -431,7 +419,7 @@ def test_wrong_result_count_is_treated_as_a_verifier_error(world, mode):
 def test_missing_mismatched_and_corrupt_evidence_never_reach_the_verifier(world):
     foreign = add_image(world.db, world.storage, world.other)
     corrupt = add_image(world.db, world.storage, world.inspection, order=1)
-    world.storage.resolve(corrupt.storage_path).write_bytes(b"not an image")  # now differs from its checksum
+    world.storage.resolve(corrupt.storage_path).write_bytes(b"not an image")
     world.db.commit()
     claims = [
         world.claim("none", ClaimType.VISIBLE_DAMAGE_PRESENCE, text="no evidence"),
@@ -460,20 +448,32 @@ def test_no_claims_is_a_completed_run_with_no_results(world):
 
 
 @requires_db
-def test_unknown_report_and_mismatched_claim_report_are_rejected(world):
+def test_unknown_report_is_rejected(world):
     with pytest.raises(AppError) as unknown:
         world.run([], StubClaimVerifier(), report_id=uuid.uuid4())
     assert unknown.value.status_code == 404
-    with pytest.raises(AppError) as mismatch:
-        world.run([], StubClaimVerifier(), result_report_id=uuid.uuid4())
-    assert mismatch.value.status_code == 422
+
+
+@requires_db
+def test_results_link_to_stored_claims_which_are_never_changed(world):
+    claim = world.claim("c1", ClaimType.VISIBLE_DAMAGE_PRESENCE, [world.image.id], text="dent")
+    report = world.store([claim])
+    before = [(c.claim_id, c.text, c.image_ids) for c in world.db.get(GeneratedReport, report.id).claims]
+    run = verify_report(world.db, world.storage, StubClaimVerifier(), report.id)
+    world.db.expire_all()
+    stored = world.db.get(GeneratedReport, report.id).claims
+    assert [(c.claim_id, c.text, c.image_ids) for c in stored] == before
+    assert world.results(run)["c1"].report_claim_id == stored[0].id
+    assert run.config["policy_version"] == POLICY_VERSION and run.config["verifier_independent"] is True
+    assert run.config["prompt_version"] == "stub-verifier-1"
 
 
 @requires_db
 def test_reverification_creates_a_separate_run(world):
     claim = world.claim("c1", ClaimType.VISIBLE_DAMAGE_PRESENCE, [world.image.id], text="dent")
-    first = world.run([claim], StubClaimVerifier())
-    second = world.run([claim], StubClaimVerifier(default_label="contradicted"))
+    report = world.store([claim])
+    first = verify_report(world.db, world.storage, StubClaimVerifier(), report.id)
+    second = verify_report(world.db, world.storage, StubClaimVerifier(default_label="contradicted"), report.id)
     assert first.id != second.id
     assert world.results(first)["c1"].verdict is Verdict.SUPPORTED
     assert world.results(second)["c1"].verdict is Verdict.CONTRADICTED
@@ -497,6 +497,7 @@ def test_no_transaction_is_open_while_the_verifier_runs(world):
 def test_interruption_marks_the_run_failed_and_propagates(world):
     class Interrupt:
         model = ModelInfo(name="stub-interrupt", version="0")
+        verification_config = CONFIG
 
         def verify(self, claims, evidence):
             raise KeyboardInterrupt

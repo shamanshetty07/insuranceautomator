@@ -15,7 +15,6 @@ target_metadata = Base.metadata
 
 
 def _url() -> str:
-    # Allow tests/tools to pass a URL explicitly via -x or config attribute.
     return config.get_main_option("sqlalchemy.url") or get_settings().database_url
 
 

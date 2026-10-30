@@ -1,20 +1,4 @@
-"""Local Qwen-VL inference with Hugging Face transformers (optional `vlm` extra).
-
-transformers and torch are imported lazily, so the app and the test suite run without
-them. Loading is local-only and fails closed:
-- VLM_MODEL_PATH must be a local directory (a downloaded snapshot); nothing is fetched:
-  HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE are forced and local_files_only=True.
-- config.json must declare model_type qwen2_vl or qwen2_5_vl; trust_remote_code=False,
-  so no code from the model directory is executed.
-- Only safetensors weights are accepted: a directory holding pickle-format weights
-  (.bin/.pt/.pth/.ckpt/.pkl) is refused, because unpickling can execute code.
-- The directory's digest (see model_dir_digest) is compared with VLM_WEIGHTS_SHA256,
-  when set, BEFORE transformers is imported.
-
-API checked against the transformers 5.15.1 source (AutoModelForImageTextToText maps
-qwen2_vl / qwen2_5_vl; processor chat template with {"type": "image"} placeholders;
-generate(max_time=...)). Not yet run against real weights in this repository.
-"""
+"""Local Qwen-VL inference with Hugging Face transformers (optional `vlm` extra)."""
 
 import hashlib
 import hmac
@@ -43,8 +27,8 @@ def _model_files(model_dir: Path) -> list[Path]:
     for path in sorted(model_dir.rglob("*")):
         rel = path.relative_to(model_dir)
         if any(part.startswith(".") for part in rel.parts):
-            continue  # e.g. .cache, .gitattributes: not part of the model
-        if path.is_file():  # follows symlinks (HF snapshots link to blobs)
+            continue
+        if path.is_file():
             files.append(path)
     return files
 
@@ -58,11 +42,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def model_dir_digest(model_dir: Path) -> str:
-    """SHA-256 over the sorted manifest "relative/path<TAB>file-sha256" of every model file.
-
-    Pin with VLM_WEIGHTS_SHA256 after verifying a download once. Any added, removed,
-    renamed or changed file (weights, config, tokenizer, chat template) changes it.
-    """
+    """SHA-256 over the sorted manifest "relative/path<TAB>file-sha256" of every model file."""
     manifest = hashlib.sha256()
     for path in _model_files(model_dir):
         rel = path.relative_to(model_dir).as_posix()

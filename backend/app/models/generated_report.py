@@ -11,6 +11,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.inspection import Inspection
+    from app.models.report_claim import ReportClaim
     from app.models.report_prediction import ReportPrediction
     from app.models.verification_run import VerificationRun
 
@@ -24,13 +25,7 @@ class EvidenceStrategy(str, enum.Enum):
 
 
 class GeneratedReport(Base):
-    """A report plus everything needed to reproduce it.
-
-    Canonical locations: model identity -> model_name/model_version; evidence
-    strategy -> evidence_strategy; prompt, sampling and strategy settings ->
-    generation_config (validated by app.schemas.runs.GenerationConfig); exact
-    predictions used -> report_predictions rows (not repeated in the JSON).
-    """
+    """A report plus everything needed to reproduce it."""
 
     __tablename__ = "generated_reports"
 
@@ -63,4 +58,10 @@ class GeneratedReport(Base):
     )
     verification_runs: Mapped[list["VerificationRun"]] = relationship(
         back_populates="generated_report", cascade="all, delete-orphan", passive_deletes=True
+    )
+    claims: Mapped[list["ReportClaim"]] = relationship(
+        back_populates="generated_report",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ReportClaim.position",
     )

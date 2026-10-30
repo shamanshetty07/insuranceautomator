@@ -23,7 +23,7 @@ def make_image_bytes(
         if orientation is not None:
             exif[0x0112] = orientation
         if gps:
-            exif[0x010F] = "SecretCameraMaker"  # Make
+            exif[0x010F] = "SecretCameraMaker"
         kwargs["exif"] = exif
     out = io.BytesIO()
     image.save(out, format=fmt, **kwargs)

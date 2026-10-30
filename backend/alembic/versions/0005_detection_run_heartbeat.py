@@ -1,13 +1,4 @@
-"""detection run heartbeat: last sign of life of the worker holding a running run
-
-Revision ID: 0005
-Revises: 0004
-Create Date: 2026-10-29
-
-Adds nullable detection_runs.heartbeat_at. Existing rows keep NULL: stale-run recovery
-falls back to created_at for them, which is exactly the old behaviour. No backfill.
-Downgrade drops the column (heartbeat history is lost; nothing else depends on it).
-"""
+"""detection run heartbeat: last sign of life of the worker holding a running run"""
 from typing import Sequence, Union
 
 import sqlalchemy as sa

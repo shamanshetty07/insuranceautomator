@@ -1,14 +1,4 @@
-"""Typed contracts for report claims and their evidence (data only; no behavior).
-
-Enums here are shared by the claim policy (app.services.claim_policy). A Verdict is a
-semantic judgement about a claim and never encodes operational routing such as
-"needs human review", which is a separate flag.
-
-Every model is frozen and every collection is a tuple, so a validated object cannot be
-changed afterwards (e.g. by appending a duplicate id). JSON input and output still use
-arrays. `model_copy(update=...)` and `model_construct` skip validation, as in all
-Pydantic models; never use them on these contracts.
-"""
+"""Typed contracts for report claims and their evidence (data only; no behavior)."""
 
 import enum
 import uuid
@@ -22,23 +12,23 @@ from app.schemas.damage import BoundingBox
 class ClaimType(str, enum.Enum):
     """What kind of statement a report claim makes; decides what evidence could support it."""
 
-    VISIBLE_DAMAGE_PRESENCE = "visible_damage_presence"  # damage exists at all in the photos
-    DAMAGE_TYPE = "damage_type"  # dent, scratch, crack, ...
-    DAMAGE_LOCATION = "damage_location"  # where on the vehicle or in the image
-    DAMAGE_SEVERITY = "damage_severity"  # minor/moderate/severe or extent
-    HIDDEN_STRUCTURAL_DAMAGE = "hidden_structural_damage"  # frame, mounts, anything not visible
-    REPAIR_RECOMMENDATION = "repair_recommendation"  # repair vs replace, procedure
-    REPAIR_COST = "repair_cost"  # any monetary estimate
-    DAMAGE_CAUSE = "damage_cause"  # how or when the damage happened
-    OTHER = "other"  # anything else; treated conservatively
+    VISIBLE_DAMAGE_PRESENCE = "visible_damage_presence"
+    DAMAGE_TYPE = "damage_type"
+    DAMAGE_LOCATION = "damage_location"
+    DAMAGE_SEVERITY = "damage_severity"
+    HIDDEN_STRUCTURAL_DAMAGE = "hidden_structural_damage"
+    REPAIR_RECOMMENDATION = "repair_recommendation"
+    REPAIR_COST = "repair_cost"
+    DAMAGE_CAUSE = "damage_cause"
+    OTHER = "other"
 
 
 class Verdict(str, enum.Enum):
     """Semantic outcome of checking one claim against the available evidence."""
 
-    SUPPORTED = "supported"  # the evidence sufficiently supports the claim
-    CONTRADICTED = "contradicted"  # the evidence clearly conflicts with the claim
-    INSUFFICIENT_EVIDENCE = "insufficient_evidence"  # the evidence cannot establish the claim
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
 MAX_CLAIM_TEXT_LENGTH = 1000
@@ -46,7 +36,6 @@ MAX_CLAIMS_PER_REPORT = 100
 MAX_REFERENCES_PER_CLAIM = 50
 
 ClaimId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
-# Same length limit as damage_predictions.damage_type (a detector class name).
 DamageTypeName = Annotated[str, Field(min_length=1, max_length=100)]
 
 
@@ -63,9 +52,9 @@ class CropBox(BoundingBox):
 class EvidenceReference(_Strict):
     """One piece of evidence a claim points at: an image, optionally a prediction and a crop."""
 
-    image_id: uuid.UUID  # InspectionImage id
-    prediction_id: uuid.UUID | None = None  # DamagePrediction id
-    crop: CropBox | None = None  # normalized to the stored image
+    image_id: uuid.UUID
+    prediction_id: uuid.UUID | None = None
+    crop: CropBox | None = None
     note: str | None = Field(default=None, max_length=500)
 
     @field_validator("note", mode="before")
@@ -91,21 +80,9 @@ class EvidenceReference(_Strict):
 
 
 class ExtractedClaim(_Strict):
-    """One atomic statement from a report, with the evidence it cites.
+    """One atomic statement from a report, with the evidence it cites."""
 
-    image_ids and prediction_ids must not contain duplicates (rejected, not silently
-    deduplicated). Every evidence reference must be covered by them: its image_id must
-    be in image_ids and its prediction_id (if any) in prediction_ids. Two evidence
-    references with the same identity (image, prediction, crop) are duplicates, even if
-    their notes differ. A claim that cites nothing has empty lists; that means "no
-    evidence cited", not "no problem".
-
-    damage_type is the claimed damage class (e.g. "dent") in the detector's vocabulary,
-    used to compare a DAMAGE_TYPE claim with the detections it cites. Optional: without
-    it a damage-type comparison is inconclusive, never a match.
-    """
-
-    claim_id: ClaimId  # report-local, e.g. "c1"
+    claim_id: ClaimId
     text: str = Field(min_length=1, max_length=MAX_CLAIM_TEXT_LENGTH)
     claim_type: ClaimType
     damage_type: DamageTypeName | None = None
@@ -137,12 +114,7 @@ class ExtractedClaim(_Strict):
 
 
 class ClaimExtractionResult(_Strict):
-    """Structured claims extracted from ONE report; the report text stays in GeneratedReport.
-
-    report_id is the GeneratedReport id, absent while the report row does not exist yet.
-    An empty claims list means nothing was extracted; it must never be read as "the
-    report found no problems" or "all claims are supported".
-    """
+    """Structured claims extracted from ONE report; the report text stays in GeneratedReport."""
 
     report_id: uuid.UUID | None = None
     claims: tuple[ExtractedClaim, ...] = Field(default=(), max_length=MAX_CLAIMS_PER_REPORT)
@@ -156,15 +128,7 @@ class ClaimExtractionResult(_Strict):
 
 
 class EvidenceRecord(_Strict):
-    """What evidence association found for one claim; stored in verification_results.evidence_reference.
-
-    Values mirror claim_policy.EvidenceAssociation / EvidenceIntegrity / DetectionMatch
-    (a test keeps them in sync). image_ids and prediction_ids list only references that
-    resolved inside the report's own inspection; anything that did not resolve is named
-    in `problems` (stable codes), never dropped silently. `detection_details` names the
-    facts behind `detection_match` (stable codes). This is provenance, not a verdict: it
-    says what was checked, not whether the claim is true.
-    """
+    """What evidence association found for one claim; stored in verification_results.evidence_reference."""
 
     association: Literal["associated", "none_cited", "unresolved"]
     integrity: Literal["unchecked", "ok", "missing", "mismatched", "corrupt"]

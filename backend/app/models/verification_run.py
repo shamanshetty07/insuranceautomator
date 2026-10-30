@@ -15,12 +15,7 @@ if TYPE_CHECKING:
 
 
 class VerificationRun(Base):
-    """One execution of one verifier configuration over one report.
-
-    Re-verifying a report creates a new run; results always belong to exactly one
-    run, so different runs never mix. `config` is validated on write by
-    app.schemas.runs.VerificationConfig.
-    """
+    """One execution of one verifier configuration over one report."""
 
     __tablename__ = "verification_runs"
     __table_args__ = (CheckConstraint(COMPLETED_AT_CHECK, name="ck_verification_runs_completed_at"),)

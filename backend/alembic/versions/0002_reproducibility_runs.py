@@ -1,13 +1,4 @@
-"""reproducibility: detection/verification runs, report provenance, image checksum
-
-Revision ID: 0002
-Revises: 0001
-Create Date: 2026-10-28
-
-Phase 1 had no code path that creates predictions, reports or verification
-results, so the tables restructured here are expected to be empty. Rather than
-invent run metadata for old rows, upgrade() refuses to run if any exist.
-"""
+"""reproducibility: detection/verification runs, report provenance, image checksum"""
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -44,13 +35,11 @@ def upgrade() -> None:
                 "inferred, so this migration will not guess; backfill manually first."
             )
 
-    # Image integrity (populated by Phase 2 upload code).
     op.add_column("inspection_images", sa.Column("sha256", sa.String(length=64), nullable=True))
     op.create_check_constraint(
         "ck_inspection_images_sha256", "inspection_images", SHA256.format(col="sha256")
     )
 
-    # Detection runs; predictions now hang off a run instead of directly off an image.
     op.create_table(
         "detection_runs",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -74,7 +63,7 @@ def upgrade() -> None:
     op.create_index("ix_detection_runs_status", "detection_runs", ["status"])
 
     op.drop_index("ix_damage_predictions_inspection_image_id", table_name="damage_predictions")
-    op.drop_column("damage_predictions", "inspection_image_id")  # also drops its FK
+    op.drop_column("damage_predictions", "inspection_image_id")
     op.drop_column("damage_predictions", "model_name")
     op.drop_column("damage_predictions", "model_version")
     op.add_column("damage_predictions", sa.Column("detection_run_id", sa.Uuid(), nullable=False))
@@ -84,7 +73,6 @@ def upgrade() -> None:
     )
     op.create_index("ix_damage_predictions_detection_run_id", "damage_predictions", ["detection_run_id"])
 
-    # Report reproducibility metadata and exact-prediction provenance.
     op.add_column(
         "generated_reports",
         sa.Column(
@@ -104,8 +92,6 @@ def upgrade() -> None:
         sa.Column("generated_report_id", sa.Uuid(), nullable=False),
         sa.Column("damage_prediction_id", sa.Uuid(), nullable=False),
         sa.ForeignKeyConstraint(["generated_report_id"], ["generated_reports.id"], ondelete="CASCADE"),
-        # NO ACTION, checked at commit: a prediction used by a report cannot be deleted
-        # on its own, yet deleting a whole inspection works whatever the statement order.
         sa.ForeignKeyConstraint(
             ["damage_prediction_id"], ["damage_predictions.id"], deferrable=True, initially="DEFERRED"
         ),
@@ -113,7 +99,6 @@ def upgrade() -> None:
     )
     op.create_index("ix_report_predictions_damage_prediction_id", "report_predictions", ["damage_prediction_id"])
 
-    # Verification runs; results now hang off a run instead of directly off a report.
     op.create_table(
         "verification_runs",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -135,7 +120,7 @@ def upgrade() -> None:
     op.create_index("ix_verification_runs_status", "verification_runs", ["status"])
 
     op.drop_index("ix_verification_results_generated_report_id", table_name="verification_results")
-    op.drop_column("verification_results", "generated_report_id")  # also drops its FK
+    op.drop_column("verification_results", "generated_report_id")
     op.drop_column("verification_results", "verifier_model")
     op.add_column("verification_results", sa.Column("verification_run_id", sa.Uuid(), nullable=False))
     op.create_foreign_key(
@@ -146,9 +131,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Restore the 0001 columns from the runs so downgrading keeps rows. Lost by
-    # design: verifier_version, run config/status, weights checksum, report
-    # provenance (report_predictions), evidence strategy and generation config.
     op.add_column("verification_results", sa.Column("generated_report_id", sa.Uuid(), nullable=True))
     op.add_column("verification_results", sa.Column("verifier_model", sa.String(length=100), nullable=True))
     op.execute(

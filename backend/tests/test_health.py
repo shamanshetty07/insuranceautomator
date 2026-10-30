@@ -27,7 +27,6 @@ def test_db_health_ok(client: TestClient):
 
 
 def test_db_health_reports_failure_honestly():
-    # Port 1 is not listening; connecting must fail and be reported as 503.
     engine = create_engine("postgresql+psycopg://x:x@127.0.0.1:1/x", connect_args={"connect_timeout": 2})
 
     def broken_db():

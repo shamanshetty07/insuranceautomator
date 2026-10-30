@@ -19,9 +19,9 @@ IMG, IMG2 = uuid.uuid4(), uuid.uuid4()
 RUN, RUN2, OLD_RUN = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 P1, P2 = uuid.uuid4(), uuid.uuid4()
 BOX = {"x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
-NEAR = {"x_min": 0.15, "y_min": 0.15, "x_max": 0.5, "y_max": 0.5}  # IoU ~0.77 with BOX
-FAR = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}  # disjoint from BOX
-EDGE = {"x_min": 0.4, "y_min": 0.4, "x_max": 0.8, "y_max": 0.8}  # small overlap, IoU ~0.04
+NEAR = {"x_min": 0.15, "y_min": 0.15, "x_max": 0.5, "y_max": 0.5}
+FAR = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}
+EDGE = {"x_min": 0.4, "y_min": 0.4, "x_max": 0.8, "y_max": 0.8}
 
 
 def claim(ctype=ClaimType.DAMAGE_TYPE, damage_type="dent", preds=(P1,), crops=None, images=(IMG,), text=None):
@@ -45,9 +45,6 @@ def signal(c, preds=None, latest_run=None, latest_count=None, images=(IMG,)):
     return detection_signal(c, list(images), preds, latest_run, latest_count)
 
 
-# --- damage type ------------------------------------------------------------------
-
-
 def test_matching_damage_type_matches():
     match, details = signal(claim())
     assert match is D.MATCHES_CLAIM and f"damage_type_match:{P1}" in details
@@ -61,12 +58,10 @@ def test_damage_type_comparison_is_normalised(claimed, detected):
 def test_different_damage_type_at_the_cited_place_conflicts():
     match, details = signal(claim(damage_type="scratch"))
     assert match is D.CONFLICTS_WITH_CLAIM and f"damage_type_mismatch:{P1}" in details
-    # same with a crop that overlaps the detection
     assert signal(claim(damage_type="scratch", crops={P1: NEAR}))[0] is D.CONFLICTS_WITH_CLAIM
 
 
 def test_different_damage_type_somewhere_else_is_not_a_conflict():
-    # The cited detection is not at the claimed place, so its class says nothing.
     assert signal(claim(damage_type="scratch", crops={P1: FAR}))[0] is D.INCONCLUSIVE
 
 
@@ -92,9 +87,6 @@ def test_same_class_at_a_different_place_is_inconclusive():
     assert signal(claim(crops={P1: FAR}))[0] is D.INCONCLUSIVE
 
 
-# --- location -----------------------------------------------------------------------
-
-
 def test_location_overlap_matches():
     match, details = signal(claim(ClaimType.DAMAGE_LOCATION, crops={P1: NEAR}))
     assert match is D.MATCHES_CLAIM and f"location_overlap:{P1}" in details
@@ -118,17 +110,10 @@ def test_location_claim_without_crop_or_detection_box_is_inconclusive():
     assert signal(claim(ClaimType.DAMAGE_LOCATION, crops={P1: BOX}), {P1: facts(box=bad_box)})[0] is D.INCONCLUSIVE
 
 
-# --- presence -----------------------------------------------------------------------
-
-
 def test_presence_with_a_cited_detection_matches_but_never_conflicts():
     assert signal(claim(ClaimType.VISIBLE_DAMAGE_PRESENCE, damage_type=None))[0] is D.MATCHES_CLAIM
-    # a crop elsewhere: the detection does not speak to the cited region
     far = claim(ClaimType.VISIBLE_DAMAGE_PRESENCE, damage_type=None, crops={P1: FAR})
     assert signal(far)[0] is D.INCONCLUSIVE
-
-
-# --- missing / zero detections ------------------------------------------------------------
 
 
 def test_image_without_completed_run_is_unavailable_not_no_detection():
@@ -166,9 +151,6 @@ def test_non_visual_claims_are_not_applicable(ctype):
     assert signal(claim(ctype)) == (D.NOT_APPLICABLE, ())
 
 
-# --- helpers ------------------------------------------------------------------------------
-
-
 def test_iou_and_normalisation():
     a = BoundingBox(**BOX)
     assert box_iou(a, a) == pytest.approx(1.0)
@@ -179,16 +161,11 @@ def test_iou_and_normalisation():
     assert normalize_damage_type("  Glass  Crack ") == "glass_crack"
 
 
-# --- claim text must state its own damage_type (claim-policy-4 sprint) ---------------------
-
-
 def test_text_mentioning_the_damage_type_can_match():
     assert signal(claim(text="A dent on the rear door."))[0] is D.MATCHES_CLAIM
 
 
 def test_regression_text_not_mentioning_the_damage_type_is_inconclusive():
-    # Before: text "Scratch on the door" + damage_type "dent" + a dent detection matched,
-    # and a supporting verifier (which reads only the text) finalised it without review.
     match, details = signal(claim(text="Scratch on the door"))
     assert match is D.INCONCLUSIVE and "claim_text_damage_type_mismatch" in details
 
@@ -207,15 +184,14 @@ def test_text_rule_is_strict_about_plurals_and_synonyms():
     assert signal(claim(damage_type="scratch", text="scratches on the door"), {P1: facts("scratch")})[0] is D.INCONCLUSIVE
     assert not text_mentions_damage_type("shattered glass on the lamp", "glass shatter")
     assert text_mentions_damage_type("Glass shatter visible", "glass_shatter")
-    assert not text_mentions_damage_type("redentify", "dent")  # whole words only
+    assert not text_mentions_damage_type("redentify", "dent")
 
 
 @pytest.mark.parametrize("text", [
     "Image 1 shows a dent.", "A dent, near the lamp.", "(dent) visible", "Dent!", "a DENT on the door",
 ])
 def test_punctuation_around_the_damage_type_still_counts_as_a_mention(text):
-    # Regression: "dent." used to be one word, so sentences ending in the type were inconclusive.
     from app.services.evidence_association import text_mentions_damage_type
 
     assert text_mentions_damage_type(text, "dent")
-    assert not text_mentions_damage_type(text.lower().replace("dent", "dents"), "dent")  # still strict on plurals
+    assert not text_mentions_damage_type(text.lower().replace("dent", "dents"), "dent")

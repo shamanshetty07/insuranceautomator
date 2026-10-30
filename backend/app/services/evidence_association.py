@@ -1,37 +1,4 @@
-"""Evidence association: which stored evidence does each claim really cite, and is it intact?
-
-Read-only: this module never adds, flushes or commits anything. It returns exactly one
-ClaimEvidence per input claim, in input order. A bad reference never raises and never
-drops a claim; it becomes UNRESOLVED with stable problem codes. Only programmer errors
-(unknown inspection id) raise ValueError.
-
-Problem codes (stable; they never contain filesystem paths):
-  no_evidence_cited
-  image_not_in_inspection:<uuid>          (unknown and foreign images look identical)
-  prediction_not_in_inspection:<uuid>     (unknown and foreign predictions look identical)
-  prediction_image_mismatch:<uuid>
-  prediction_without_image
-  image_file_missing:<uuid>
-  image_checksum_absent:<uuid>
-  image_checksum_mismatch:<uuid>
-  image_dimensions_mismatch:<uuid>
-  image_unreadable:<uuid>
-  problems_truncated                      (only when to_record had to cap the list)
-
-Detection detail codes (EvidenceRecord.detection_details; why detection_match was chosen):
-  detection_not_run:<image uuid>          no completed detection run (never run, failed, running)
-  no_detections:<image uuid>              latest completed run found nothing
-  uncited_detections:<image uuid>         detections exist that the claim does not cite
-  prediction_not_latest:<uuid>            cited prediction is not from the image's latest completed run
-  detection_present:<uuid>                a cited detection exists (presence claims)
-  claim_damage_type_absent                the claim states no structured damage_type
-  claim_text_damage_type_mismatch         the claim's text does not mention its own damage_type
-  damage_type_match:<uuid> / damage_type_mismatch:<uuid>
-  location_overlap:<uuid> / location_no_overlap:<uuid> / location_unclear:<uuid>
-  location_not_given:<uuid>               no crop pairs the claim with this detection
-  detection_box_absent:<uuid>             the detection has no usable bounding box
-  details_truncated
-"""
+"""Evidence association: which stored evidence does each claim really cite, and is it intact?"""
 
 import hashlib
 import re
@@ -66,12 +33,9 @@ _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}
 )
 
-# IoU at or above which a cited crop and a cited detection box count as the same region.
-# Not calibrated on data: it only separates "same place" / "disjoint" / "unclear" and
-# never makes a claim true. Disjoint (no overlap at all) is the only location conflict.
+# Uncalibrated: separates same place / disjoint / unclear; never makes a claim true.
 LOCATION_MATCH_IOU = 0.3
 
-# Severity used to combine per-image results into one claim-level integrity.
 _SEVERITY = {
     EvidenceIntegrity.OK: 0,
     EvidenceIntegrity.UNCHECKED: 1,
@@ -147,7 +111,6 @@ def box_iou(a: BoundingBox, b: BoundingBox) -> float:
     return inter / (area_a + area_b - inter)
 
 
-# Per-prediction comparison outcome.
 _MATCH, _CONFLICT, _UNKNOWN = "match", "conflict", "unknown"
 
 
@@ -168,18 +131,11 @@ def _location(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> 
 
 
 def _words(text: str) -> list[str]:
-    # Any non-alphanumeric character separates words, so "a dent." / "dent," / "paint-scratch" work.
     return [w for w in re.split(r"[^0-9a-z]+", text.lower()) if w]
 
 
 def text_mentions_damage_type(text: str, damage_type: str) -> bool:
-    """True if damage_type's words appear as a contiguous word sequence in text.
-
-    Deliberately strict: plurals and synonyms ("scratches", "shattered glass") do not
-    count, so such a claim is inconclusive and reviewed rather than compared. The
-    verifier only reads the text, so the structured damage_type must say the same thing
-    before a detection may corroborate it.
-    """
+    """True if damage_type's words appear as a contiguous word sequence in text."""
     words, phrase = _words(text), _words(damage_type)
     n = len(phrase)
     return n > 0 and any(words[i : i + n] == phrase for i in range(len(words) - n + 1))
@@ -191,20 +147,15 @@ def _compare(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> t
         return (location if location is not None else _UNKNOWN), [loc_detail]
 
     if claim.claim_type is ClaimType.VISIBLE_DAMAGE_PRESENCE:
-        # A detection is consistent with "damage is present"; a crop elsewhere only
-        # means this detection does not speak to the cited region (never a conflict).
         details = [f"detection_present:{pid}", loc_detail]
         return (_MATCH if location in (None, _MATCH) else _UNKNOWN), details
 
-    # DAMAGE_TYPE
     if claim.damage_type is None:
         return _UNKNOWN, ["claim_damage_type_absent", loc_detail]
     if not text_mentions_damage_type(claim.text, claim.damage_type):
         return _UNKNOWN, ["claim_text_damage_type_mismatch", loc_detail]
     if normalize_damage_type(claim.damage_type) == normalize_damage_type(facts.damage_type):
         return (_MATCH if location in (None, _MATCH) else _UNKNOWN), [f"damage_type_match:{pid}", loc_detail]
-    # Different class: a conflict only where the detection is at the claimed place (or
-    # no place is given). A different class somewhere else says nothing about the claim.
     return (_CONFLICT if location in (None, _MATCH) else _UNKNOWN), [f"damage_type_mismatch:{pid}", loc_detail]
 
 
@@ -215,18 +166,7 @@ def detection_signal(
     latest_run: Mapping[uuid.UUID, uuid.UUID],
     latest_count: Mapping[uuid.UUID, int],
 ) -> tuple[DetectionMatch, tuple[str, ...]]:
-    """Compare one ASSOCIATED claim with detection results; pure (no DB, no files).
-
-    cited_images: the claim's images (all resolved in the inspection).
-    cited_predictions: the claim's resolved predictions, all on cited images.
-    latest_run / latest_count: latest COMPLETED run per image and its prediction count.
-
-    MATCHES_CLAIM / CONFLICTS_WITH_CLAIM need every cited detection to agree / disagree
-    on the attributes the claim states; anything mixed or not comparable is
-    INCONCLUSIVE. A cited image without a completed run makes the signal UNAVAILABLE;
-    NO_DETECTION needs every cited image analysed with nothing found. None of these
-    is a verdict: the policy decides (and never reads NO_DETECTION as absence).
-    """
+    """Compare one ASSOCIATED claim with detection results; pure (no DB, no files)."""
     if claim.claim_type not in _VISUAL_TYPES:
         return DetectionMatch.NOT_APPLICABLE, ()
     if not cited_images:
@@ -294,7 +234,6 @@ def _check_image(storage: ImageStorage, image: InspectionImage, check_integrity:
     except OSError:
         return _ImageCheck(path, EvidenceIntegrity.MISSING, (f"image_file_missing:{iid}",))
 
-    # Structural validity first: a corrupt file outranks every other finding.
     size: tuple[int, int] | None = None
     try:
         with Image.open(path) as pil:
@@ -330,21 +269,7 @@ def associate_claims(
     *,
     check_integrity: bool = True,
 ) -> list[ClaimEvidence]:
-    """Associate every claim with evidence of ``inspection_id``; one result per claim, in order.
-
-    Reference validity (association: are the ids real and in this inspection?) is
-    decided first and separately. Only for an ASSOCIATED visual claim is detection then
-    compared semantically by `detection_signal`: the claim's structured damage_type
-    against each cited detection's class, and its cited crops against the detection
-    boxes. detection_match is only a SIGNAL for the policy, never proof: a matching
-    class or an overlapping box does not make the claim true. The policy must never
-    read NO_DETECTION as absence of damage.
-
-    Predictions that are cited but unresolved (foreign, unknown, on an uncited image, or
-    without any cited image) are not reported in prediction_ids/crops; resolved ones are.
-    Images whose stored path is unsafe have no path and so are absent from image_paths
-    (the problem code still names them).
-    """
+    """Associate every claim with evidence of ``inspection_id``; one result per claim, in order."""
     if db.scalar(select(Inspection.id).where(Inspection.id == inspection_id)) is None:
         raise ValueError("unknown inspection")
 
@@ -368,7 +293,6 @@ def associate_claims(
             )
         }
 
-    # Facts for cited predictions, only for predictions inside this inspection.
     pred_facts: dict[uuid.UUID, PredictionFacts] = {}
     if cited_preds:
         for pid, run_id, img_id, damage_type, bounding_box in db.execute(
@@ -389,7 +313,6 @@ def associate_claims(
             pred_facts[pid] = PredictionFacts(img_id, run_id, damage_type, bounding_box)
     pred_image = {pid: facts.image_id for pid, facts in pred_facts.items()}
 
-    # Latest completed run per resolved image, with its prediction count.
     latest_run: dict[uuid.UUID, uuid.UUID] = {}
     latest_count: dict[uuid.UUID, int] = {}
     if images:
@@ -413,7 +336,7 @@ def associate_claims(
             )
         latest_count = {img: counts.get(run, 0) for img, run in latest_run.items()}
 
-    checks: dict[uuid.UUID, _ImageCheck] = {}  # each image hashed/decoded at most once
+    checks: dict[uuid.UUID, _ImageCheck] = {}
 
     def check(image_id: uuid.UUID) -> _ImageCheck:
         if image_id not in checks:
@@ -453,7 +376,7 @@ def associate_claims(
             if pid not in pred_image:
                 problems.append(f"prediction_not_in_inspection:{pid}")
             elif not c_images:
-                continue  # already reported as prediction_without_image
+                continue
             elif pred_image[pid] not in image_set:
                 problems.append(f"prediction_image_mismatch:{pid}")
             else:
@@ -468,7 +391,7 @@ def associate_claims(
                     problems.append(f"prediction_image_mismatch:{ref.prediction_id}")
                     continue
             elif ref.prediction_id is not None:
-                continue  # unknown prediction, already reported
+                continue
             crops.append(ref)
 
         association = EvidenceAssociation.UNRESOLVED if problems else EvidenceAssociation.ASSOCIATED

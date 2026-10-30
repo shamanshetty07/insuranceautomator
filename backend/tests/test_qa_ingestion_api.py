@@ -1,11 +1,4 @@
-"""QA gap tests for the image API and upload service (needs TEST_DATABASE_URL).
-
-Covers what the Phase 2 tests do not: hostile client filenames, the exact upload-size
-boundary, request bodies larger than the limit, unsafe/missing files behind the content
-endpoint, 500 responses that must not leak details, CORS, repeated deletes and truly
-concurrent identical uploads. The oversized-body test was a strict xfail until the
-request body cap (app/core/body_limit.py) was added.
-"""
+"""QA gap tests for the image API and upload service (needs TEST_DATABASE_URL)."""
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -56,7 +49,6 @@ def test_hostile_filename_is_display_only_and_never_shapes_the_path(client, stor
      ("   ", "unnamed"), (None, "unnamed"), ("x" * 300 + ".jpg", "x" * 255)],
 )
 def test_clean_filename_strips_paths_and_control_characters(raw, expected):
-    # httpx percent-encodes control characters, so they are checked here rather than via HTTP.
     assert image_service.clean_filename(raw) == expected
 
 
@@ -64,7 +56,7 @@ def test_upload_size_limit_is_inclusive(client, test_settings):
     iid = _inspection(client)
     image = make_image_bytes()
     limit = test_settings.max_upload_bytes
-    exact = image + b"\x00" * (limit - len(image))  # trailing bytes after EOI are ignored by decoders
+    exact = image + b"\x00" * (limit - len(image))
     assert len(exact) == limit
     assert _upload(client, iid, exact).status_code == 201
     over = make_image_bytes(color=(1, 2, 3))
@@ -128,16 +120,16 @@ def test_unexpected_storage_failure_returns_generic_500_without_details(
         raise OSError(28, "No space left on device", f"/very/secret/{relative_path}")
 
     monkeypatch.setattr(ImageStorage, "write", disk_full)
-    raw_client = TestClient(app, raise_server_exceptions=False)  # dependency overrides still apply
+    raw_client = TestClient(app, raise_server_exceptions=False)
     r = _upload(raw_client, iid)
     assert (r.status_code, r.json()) == (
         500, {"error": {"code": "internal_error", "message": "An unexpected error occurred."}}
     )
     assert "secret" not in r.text and "No space" not in r.text
-    db_session.rollback()  # production closes the request session; the shared test session must too
+    db_session.rollback()
     monkeypatch.undo()
     assert client.get(f"/api/v1/inspections/{iid}/images").json()["total"] == 0
-    assert _upload(client, iid).status_code == 201  # no lingering lock or partial state
+    assert _upload(client, iid).status_code == 201
 
 
 def _allowed_origins() -> list[str]:

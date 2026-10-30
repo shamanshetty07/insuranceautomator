@@ -71,7 +71,7 @@ def test_crops_and_predictions():
     assert len(cl) == 3
     assert cl[0].evidence[0].crop.x_max == 0.5 and "dent" in cl[0].text
     assert cl[0].prediction_ids == (P1,) and cl[1].prediction_ids == (P2,)
-    assert cl[1].evidence[0].crop is None  # invalid box dropped
+    assert cl[1].evidence[0].crop is None
     assert cl[2].prediction_ids == () and cl[2].image_ids == (B,)
 
 

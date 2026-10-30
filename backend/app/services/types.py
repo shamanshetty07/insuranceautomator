@@ -21,8 +21,6 @@ class Detection:
     confidence: float
     bounding_box: dict[str, float] | None = None
     segmentation_data: list[Any] | None = None
-    # The stored DamagePrediction id, once persisted. Detectors leave it None; evidence
-    # built from stored runs sets it so a report generator can cite the prediction.
     prediction_id: uuid.UUID | None = None
 
 
@@ -30,7 +28,6 @@ class Detection:
 class ModelInfo:
     name: str
     version: str
-    # Lowercase hex SHA-256 of the weights file, when the model loads one.
     weights_sha256: str | None = None
 
 
@@ -42,7 +39,7 @@ class ReportClaim:
 @dataclass(frozen=True)
 class ClaimVerdict:
     claim_text: str
-    label: str  # a VerificationLabel value
+    label: str
     explanation: str
     evidence_reference: dict[str, Any] | None = None
     verifier: ModelInfo | None = None

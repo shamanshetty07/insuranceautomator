@@ -14,7 +14,6 @@ export function DetectionResultCard({ image, run }: Props) {
 
   return (
     <li className="space-y-2 rounded-lg border border-slate-200 bg-white p-3" aria-label={`Detection results for ${label}`}>
-      {/* The wrapper hugs the image, so percentage offsets map onto the stored pixels. */}
       <div className="relative overflow-hidden rounded bg-slate-100">
         <img
           src={apiUrl(image.content_url)}

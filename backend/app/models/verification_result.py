@@ -17,13 +17,7 @@ if TYPE_CHECKING:
 
 
 class VerificationLabel(str, enum.Enum):
-    """Outcome of checking one claim against visual evidence.
-
-    OMITTED_DAMAGE is different in kind: it describes damage present in the
-    images but absent from the report, so it is not a claim extracted from the
-    report text. Such rows come from a separate image-to-report comparison;
-    claim_text then describes the omitted damage rather than quoting the report.
-    """
+    """Outcome of checking one claim against visual evidence."""
 
     SUPPORTED = "supported"
     CONTRADICTED = "contradicted"
@@ -39,7 +33,6 @@ class VerificationResult(Base):
 
     __tablename__ = "verification_results"
     __table_args__ = (
-        # An omitted-damage row is a coverage finding, not a verdict about a report claim.
         CheckConstraint(
             "verification_label IS DISTINCT FROM 'omitted_damage' OR verdict IS NULL",
             name="ck_verification_results_omitted_has_no_verdict",
@@ -55,6 +48,12 @@ class VerificationResult(Base):
             "ix_verification_results_review",
             "verification_run_id",
             postgresql_where=text("needs_human_review"),
+        ),        Index(
+            "uq_verification_results_run_report_claim",
+            "verification_run_id",
+            "report_claim_id",
+            unique=True,
+            postgresql_where=text("report_claim_id IS NOT NULL"),
         ),
     )
 
@@ -63,7 +62,6 @@ class VerificationResult(Base):
         ForeignKey("verification_runs.id", ondelete="CASCADE"), index=True
     )
     claim_text: Mapped[str] = mapped_column(Text)
-    # Raw verifier label. NULL = the verifier produced nothing / invalid output for this claim.
     verification_label: Mapped[VerificationLabel | None] = mapped_column(
         Enum(
             VerificationLabel,
@@ -76,7 +74,9 @@ class VerificationResult(Base):
         index=True,
         nullable=True,
     )
-    # Claim-level pipeline fields (NULL on legacy rows).
+    report_claim_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("report_claims.id", ondelete="CASCADE"), index=True
+    )
     claim_id: Mapped[str | None] = mapped_column(String(64))
     claim_type: Mapped[ClaimType | None] = mapped_column(
         Enum(
@@ -88,7 +88,6 @@ class VerificationResult(Base):
             values_callable=lambda e: [m.value for m in e],
         )
     )
-    # Semantic outcome. NULL = no factual verdict (ambiguous legacy label, omitted_damage).
     verdict: Mapped[Verdict | None] = mapped_column(
         Enum(
             Verdict,
@@ -99,7 +98,6 @@ class VerificationResult(Base):
             values_callable=lambda e: [m.value for m in e],
         )
     )
-    # Operational routing, deliberately separate from the verdict.
     needs_human_review: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), default=False
     )
@@ -107,7 +105,6 @@ class VerificationResult(Base):
         JSONB, server_default=text("'[]'::jsonb"), default=list
     )
     explanation: Mapped[str] = mapped_column(Text)
-    # Free-form pointer to supporting evidence, e.g. {"image_ids": [...], "prediction_ids": [...]}.
     evidence_reference: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

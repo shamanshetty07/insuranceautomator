@@ -1,8 +1,4 @@
-"""Decode, validate and normalize an uploaded image.
-
-Trust model: only the decoded content matters. The client's filename and
-Content-Type are never used to decide what the file is.
-"""
+"""Decode, validate and normalize an uploaded image."""
 
 import io
 import logging
@@ -16,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 EXIF_ORIENTATION_TAG = 0x0112
 
-# Pillow format -> (media type, file extension). Anything else is rejected.
 SUPPORTED_FORMATS: dict[str, tuple[str, str]] = {
     "JPEG": ("image/jpeg", "jpg"),
     "PNG": ("image/png", "png"),
@@ -32,19 +27,19 @@ class ImageLimits:
 
 @dataclass(frozen=True)
 class ProcessedImage:
-    data: bytes  # normalized, re-encoded, metadata-stripped bytes to store
+    data: bytes
     media_type: str
     extension: str
-    width_px: int  # of `data`, i.e. after orientation normalization
+    width_px: int
     height_px: int
-    exif_orientation: int | None  # original value (1-8), informational only
+    exif_orientation: int | None
 
 
 def _original_orientation(image: Image.Image) -> int | None:
     """Return the EXIF orientation if present and valid (1-8), else None."""
     try:
         value = image.getexif().get(EXIF_ORIENTATION_TAG)
-    except Exception:  # malformed EXIF must never fail the upload
+    except Exception:
         logger.warning("Could not read EXIF orientation; ignoring")
         return None
     return value if isinstance(value, int) and 1 <= value <= 8 else None
@@ -55,7 +50,7 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
         raise AppError(422, "empty_file", "The uploaded file is empty.")
 
     try:
-        image = Image.open(io.BytesIO(raw))  # reads the header only
+        image = Image.open(io.BytesIO(raw))
     except Image.DecompressionBombError:
         raise AppError(422, "invalid_dimensions", "Image dimensions are too large.") from None
     except (UnidentifiedImageError, OSError):
@@ -64,7 +59,6 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
         ) from None
 
     with image:
-        # Multi-picture JPEGs (MPO, from many phone cameras) are JPEGs; frame 0 is kept.
         image_format = "JPEG" if image.format == "MPO" else image.format
         if image_format not in SUPPORTED_FORMATS:
             raise AppError(
@@ -72,7 +66,6 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
             )
         media_type, extension = SUPPORTED_FORMATS[image_format]
 
-        # Check size from the header before any expensive pixel decoding.
         width, height = image.size
         if min(width, height) < limits.min_side_px:
             raise AppError(
@@ -89,15 +82,15 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
 
         orientation = _original_orientation(image)
         try:
-            image.load()  # full decode: detects truncated/corrupt data
-            normalized = ImageOps.exif_transpose(image)  # applies the rotation to pixels
+            image.load()
+            normalized = ImageOps.exif_transpose(image)
         except (OSError, SyntaxError, ValueError, Image.DecompressionBombError):
             raise AppError(422, "invalid_image", "The image is corrupt or cannot be decoded.") from None
 
         icc_profile = image.info.get("icc_profile")
         out = io.BytesIO()
         save_kwargs: dict[str, object] = {}
-        if icc_profile:  # colour fidelity, not personal data
+        if icc_profile:
             save_kwargs["icc_profile"] = icc_profile
         if image_format == "JPEG":
             if normalized.mode not in ("RGB", "L"):
@@ -105,9 +98,6 @@ def process_image(raw: bytes, limits: ImageLimits) -> ProcessedImage:
             save_kwargs.update(quality=95)
         elif image_format == "WEBP":
             save_kwargs.update(quality=95)
-        # No exif= argument and ImageOps clears the orientation tag: GPS, camera
-        # model, timestamps etc. are not carried into the stored file. The JPEG
-        # COM segment would otherwise be copied from info, so drop it too.
         normalized.info.pop("comment", None)
         normalized.save(out, format=image_format, **save_kwargs)
 

@@ -1,14 +1,4 @@
-"""Opt-in smoke test: real local Qwen-VL inference on images you choose. Not run by pytest.
-
-Needs `pip install -e ".[vlm]"` and an already-downloaded local model directory; it
-never downloads anything (offline mode is forced). No database is used.
-
-  VLM_SMOKE=1 python scripts/vlm_smoke.py --model-dir ../models/Qwen2-VL-2B-Instruct \\
-      [--sha256 <pinned digest>] [--device cpu|mps] img1.jpg [img2.jpg ...]
-
-Prints the model digest, timings, the validated structured claims, and the verifier's
-label for each claim. Output is a model prediction, not ground truth.
-"""
+"""Opt-in smoke test: real local Qwen-VL inference on images you choose. Not run by pytest."""
 
 import argparse
 import os

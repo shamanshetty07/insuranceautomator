@@ -1,33 +1,8 @@
-"""Persist claim-level verification of one report (model-independent orchestration).
-
-For each structured claim: associate it with inspection evidence (evidence_association),
-ask the verifier about the ORIGINAL stored images it cites, run the deterministic claim
-policy, and store one VerificationResult. Nothing here knows about Qwen or YOLO; the
-verifier is any ClaimVerificationService.
-
-- Every input claim yields exactly one VerificationResult. A claim that cannot be checked
-  is stored as insufficient_evidence with a reason code, never dropped.
-- The raw verifier label/explanation (`verification_label`, `explanation`) are stored
-  apart from the final policy outcome (`verdict`, `needs_human_review`,
-  `policy_reason_codes`). The verifier never sees the report text or detection boxes,
-  only the claim text and the cited original images, so it cannot grade its own report.
-  Only claim labels (verdict_mapping.CLAIM_LABELS) are stored as a claim's raw label;
-  an unrecognised label or omitted_damage is stored as NULL with the reason in the
-  explanation, and the policy fails that claim closed (insufficient_evidence, review).
-  Every row built here therefore satisfies the table's CHECK constraints.
-- Results are written in ONE transaction: if that write still fails, no result is kept
-  and the run is marked `failed` with SAVE_FAILED_MESSAGE (never a partial run).
-- The verifier is not called when the policy already decides the claim without it
-  (unusable evidence, hidden damage, cost, ...), so no inference is wasted.
-- No database transaction is open while the verifier runs: the run is committed as
-  `running`, evidence is read and the read transaction ended, then results are written
-  in one short transaction. A verifier exception fails that claim only; the run is
-  `failed` only if every verifier call that was made failed.
-- The original GeneratedReport is never modified.
-"""
+"""Persist claim-level verification of one report (model-independent orchestration)."""
 
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
@@ -38,8 +13,8 @@ from app.models.generated_report import GeneratedReport
 from app.models.run_status import RunStatus
 from app.models.verification_result import VerificationLabel, VerificationResult
 from app.models.verification_run import VerificationRun
-from app.schemas.claims import ClaimExtractionResult, ExtractedClaim, Verdict
-from app.schemas.runs import VerificationConfig
+from app.schemas.claims import ExtractedClaim, Verdict
+from app.schemas.runs import ModelRecord, StoredVerificationConfig, VerificationConfig
 from app.services.claim_policy import (
     POLICY_VERSION,
     ClaimPolicyDecision,
@@ -51,6 +26,8 @@ from app.services.claim_policy import (
 from app.services.evidence_association import ClaimEvidence, associate_claims
 from app.services.image_storage import ImageStorage
 from app.services.interfaces import ClaimVerificationService
+from app.services.model_guard import refuse_stub_in_production, verifier_is_independent
+from app.services.report_claims import claims_from_rows
 from app.services.types import EvidenceBundle, ImageRef, ReportClaim
 from app.services.verdict_mapping import is_claim_label, legacy_verdict
 
@@ -60,7 +37,7 @@ INTERRUPTED_MESSAGE = "Verification was interrupted before it finished."
 ALL_FAILED_MESSAGE = "The verifier failed for every claim it was asked to check."
 SAVE_FAILED_MESSAGE = "The verification results could not be saved."
 _MAX_EXPLANATION_CHARS = 2000
-_UNRECOGNISED = "unrecognised"  # stands in for an untrusted verifier label we will not store
+_UNRECOGNISED = "unrecognised"
 
 
 def _now() -> datetime:
@@ -85,13 +62,16 @@ class _Raw:
         self.errored = errored
 
 
-def _policy_input(claim: ExtractedClaim, ev: ClaimEvidence, outcome: VerifierOutcome) -> ClaimPolicyInput:
+def _policy_input(
+    claim: ExtractedClaim, ev: ClaimEvidence, outcome: VerifierOutcome, verifier_independent: bool = True
+) -> ClaimPolicyInput:
     return ClaimPolicyInput(
         claim_type=claim.claim_type,
         verifier=outcome,
         integrity=ev.integrity,
         association=ev.association,
         detection_match=ev.detection_match,
+        verifier_independent=verifier_independent,
     )
 
 
@@ -130,9 +110,6 @@ def _ask_verifier(verifier: ClaimVerificationService, claim: ExtractedClaim, ev:
             False,
         )
     if not is_claim_label(label):
-        # omitted_damage describes damage missing from the report, not this claim. It is
-        # not stored as the claim's raw label (a claim row always has a verdict, and an
-        # omitted_damage row must not); the explanation records what the verifier said.
         return _Raw(
             None,
             VerifierOutcome(verdict=_UNRECOGNISED),
@@ -141,8 +118,6 @@ def _ask_verifier(verifier: ClaimVerificationService, claim: ExtractedClaim, ev:
             False,
         )
     mapped = legacy_verdict(label.value)
-    # A label with no factual verdict (e.g. unsupported_severity) goes to the policy as an
-    # unrecognised value, so it fails closed instead of being guessed.
     outcome = VerifierOutcome(verdict=mapped if mapped is not None else label.value)
     return _Raw(label, outcome, explanation or "No explanation given.", True, False)
 
@@ -153,9 +128,11 @@ def _build_row(
     ev: ClaimEvidence,
     raw: _Raw,
     decision: ClaimPolicyDecision,
+    report_claim_id: uuid.UUID | None = None,
 ) -> VerificationResult:
     return VerificationResult(
         verification_run_id=run_id,
+        report_claim_id=report_claim_id,
         claim_id=claim.claim_id,
         claim_text=claim.text,
         claim_type=claim.claim_type,
@@ -199,11 +176,13 @@ def _execute(
     run_id: uuid.UUID,
     inspection_id: uuid.UUID,
     claims: list[ExtractedClaim],
+    report_claim_ids: Mapping[str, uuid.UUID] | None = None,
+    verifier_independent: bool = True,
 ) -> VerificationRun:
     evidence = associate_claims(db, storage, inspection_id, claims)
-    if len(evidence) != len(claims):  # association must never drop a claim
+    if len(evidence) != len(claims):
         raise RuntimeError("evidence association returned a different number of claims")
-    db.rollback()  # end the read transaction: none is open while the verifier runs
+    db.rollback()
 
     rows: list[VerificationResult] = []
     attempted = errored = 0
@@ -214,10 +193,11 @@ def _execute(
             raw = _ask_verifier(verifier, claim, ev)
         attempted += raw.attempted
         errored += raw.errored
-        decision = evaluate_claim(_policy_input(claim, ev, raw.outcome))
+        decision = evaluate_claim(_policy_input(claim, ev, raw.outcome, verifier_independent))
         if not raw.attempted:
             raw.explanation = f"Verifier not called: {decision.explanation}"
-        rows.append(_build_row(run_id, claim, ev, raw, decision))
+        claim_row_id = (report_claim_ids or {}).get(claim.claim_id)
+        rows.append(_build_row(run_id, claim, ev, raw, decision, claim_row_id))
 
     all_failed = attempted > 0 and errored == attempted
     status = RunStatus.FAILED if all_failed else RunStatus.COMPLETED
@@ -240,40 +220,67 @@ def _execute(
     return _load_run(db, run_id)
 
 
+def run_config(
+    verifier: ClaimVerificationService, verifier_independent: bool
+) -> StoredVerificationConfig:
+    """The config recorded on a run, built from the verifier itself (never from a client)."""
+    config = getattr(verifier, "verification_config", None)
+    if not isinstance(config, VerificationConfig):
+        raise TypeError("the verifier must expose a VerificationConfig as verification_config")
+    limits = getattr(verifier, "limits_record", None)
+    return StoredVerificationConfig(
+        **config.model_dump(exclude={"policy_version"}),
+        policy_version=POLICY_VERSION,
+        model=ModelRecord(
+            weights_sha256=verifier.model.weights_sha256,
+            packages=dict(getattr(verifier, "runtime", None) or {}),
+        ),
+        limits=limits,
+        verifier_independent=verifier_independent,
+    )
+
+
 def verify_report(
     db: Session,
     storage: ImageStorage,
     verifier: ClaimVerificationService,
     report_id: uuid.UUID,
-    claims: ClaimExtractionResult,
-    config: VerificationConfig,
 ) -> VerificationRun:
-    """Verify `claims` of one stored report; returns the VerificationRun with its results."""
-    report = db.get(GeneratedReport, report_id)
+    """Verify the stored claims of one report; returns the VerificationRun with its results."""
+    report = db.scalars(
+        select(GeneratedReport)
+        .where(GeneratedReport.id == report_id)
+        .options(selectinload(GeneratedReport.claims))
+    ).one_or_none()
     if report is None:
         raise AppError(404, "not_found", "Report not found.")
-    if claims.report_id is not None and claims.report_id != report_id:
-        raise AppError(422, "report_mismatch", "The claims belong to a different report.")
+    refuse_stub_in_production(verifier, "vlm_unavailable")
+    claims = claims_from_rows(report.id, report.claims)
+    claim_ids = {row.claim_id: row.id for row in report.claims}
     inspection_id = report.inspection_id
+    independent = verifier_is_independent(
+        report.model_name, report.model_version, report.generation_config, verifier.model
+    )
+    config = run_config(verifier, independent)
 
     run_id = uuid.uuid4()
-    run_config = config.model_copy(update={"policy_version": POLICY_VERSION})
     db.add(
         VerificationRun(
             id=run_id,
             generated_report_id=report_id,
             verifier_model=verifier.model.name,
             verifier_version=verifier.model.version,
-            config=run_config.model_dump(mode="json"),
+            config=config.model_dump(mode="json"),
             status=RunStatus.RUNNING,
         )
     )
-    db.commit()  # visible as `running` before any verifier work, like detection runs
+    db.commit()
 
     try:
-        return _execute(db, storage, verifier, run_id, inspection_id, list(claims.claims))
+        return _execute(
+            db, storage, verifier, run_id, inspection_id, list(claims.claims), claim_ids, independent
+        )
     except BaseException:
-        # Includes cancellation and KeyboardInterrupt: record the failure, never swallow it.
         _fail_if_running(db, run_id, INTERRUPTED_MESSAGE)
         raise
 

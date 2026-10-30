@@ -1,12 +1,4 @@
-"""Image upload and deletion with explicit handling of partial failures.
-
-PostgreSQL cannot commit filesystem changes atomically, so:
-- upload: write the file first, then commit the row; if the commit fails, delete the
-  new file (and log loudly if that cleanup fails).
-- delete: commit the row deletion first, then delete files; a rolled-back transaction
-  never costs a valid file, and a failed file delete leaves a recoverable orphan that
-  the reconciliation tool reports.
-"""
+"""Image upload and deletion with explicit handling of partial failures."""
 
 import hashlib
 import logging
@@ -41,7 +33,6 @@ def _delete_files(storage: ImageStorage, paths: list[str]) -> None:
         try:
             storage.delete(path)
         except Exception:
-            # Never log file contents; the relative path is enough to reconcile.
             logger.exception("Failed to delete stored file; orphan needs reconciliation path=%s", path)
 
 
@@ -56,14 +47,11 @@ def upload_image(
     if db.get(Inspection, inspection_id) is None:
         raise AppError(404, "not_found", "Inspection not found.")
 
-    # CPU-heavy work happens before any row lock is taken.
     processed = process_image(
         raw, ImageLimits(min_side_px=settings.min_image_side_px, max_pixels=settings.max_image_pixels)
     )
     sha256 = hashlib.sha256(processed.data).hexdigest()
 
-    # Lock the inspection row so concurrent uploads serialize: image_order, the
-    # count limit and the duplicate check cannot race.
     if db.get(Inspection, inspection_id, with_for_update=True, populate_existing=True) is None:
         raise AppError(404, "not_found", "Inspection not found.")
     count, max_order = db.execute(
@@ -135,7 +123,7 @@ def delete_image(
         raise AppError(
             409,
             "image_in_use",
-            "This image has detections used as evidence by a report and cannot be deleted.",
+            "This image is used as evidence by a report (its detections or a claim) and cannot be deleted.",
         ) from None
     except BaseException:
         db.rollback()
@@ -157,6 +145,6 @@ def delete_inspection(db: Session, storage: ImageStorage, inspection_id: uuid.UU
         db.delete(inspection)
         db.commit()
     except BaseException:
-        db.rollback()  # files are untouched
+        db.rollback()
         raise
     _delete_files(storage, paths)

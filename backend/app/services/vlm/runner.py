@@ -1,9 +1,4 @@
-"""The seam between the adapters and an actual model: a runner turns one request into text.
-
-Adapters (prompting, parsing, validation) never import a model library; a runner does.
-Tests inject a fake runner. `call_runner` adds the bounded wait every caller needs:
-one inference at a time per process, and a timeout.
-"""
+"""The seam between the adapters and an actual model: a runner turns one request into text."""
 
 import logging
 import threading
@@ -18,7 +13,6 @@ from app.services.vlm.errors import VlmBusy, VlmInferenceError, VlmOutputError, 
 
 logger = logging.getLogger(__name__)
 
-# Seconds kept back from the timeout for the runner's own cooperative stop (max_time).
 _STOP_MARGIN_SECONDS = 5.0
 
 
@@ -26,14 +20,13 @@ _STOP_MARGIN_SECONDS = 5.0
 class VlmRequest:
     system: str
     user_text: str
-    images: tuple[Image.Image, ...]  # RGB, already size-limited, in prompt order
+    images: tuple[Image.Image, ...]
     max_new_tokens: int
-    max_time_seconds: float  # the runner should stop generating after this long
+    max_time_seconds: float
 
 
 class VlmRunner(Protocol):
     info: ModelInfo
-    # Installed package versions (name -> version or None), recorded with results.
     runtime: Mapping[str, str | None]
 
     def generate(self, request: VlmRequest) -> str:
@@ -41,7 +34,7 @@ class VlmRunner(Protocol):
         ...
 
 
-# Models are large and not safe for concurrent use; one inference per process.
+# Models are not safe for concurrent use: one inference per process.
 _INFERENCE_LOCK = threading.Lock()
 
 
@@ -51,13 +44,7 @@ def call_runner(
     timeout_seconds: float,
     lock: threading.Lock = _INFERENCE_LOCK,
 ) -> str:
-    """Run one inference with a lock and a hard wait limit; return its raw text.
-
-    A Python thread cannot be killed: on timeout the inference keeps running in a daemon
-    thread (holding the lock until it ends; real runners also get max_time so generation
-    stops on its own) and VlmTimeout is raised. Meanwhile other calls wait up to
-    `timeout_seconds` for the lock and then raise VlmBusy instead of piling up.
-    """
+    """Run one inference with a lock and a hard wait limit; return its raw text."""
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     if not lock.acquire(timeout=timeout_seconds):

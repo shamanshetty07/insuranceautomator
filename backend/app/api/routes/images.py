@@ -29,7 +29,7 @@ def _require_inspection(db: DbSession, inspection_id: uuid.UUID) -> None:
 
 def _get_image(db: DbSession, inspection_id: uuid.UUID, image_id: uuid.UUID) -> InspectionImage:
     image = db.get(InspectionImage, image_id)
-    if image is None or image.inspection_id != inspection_id:  # wrong inspection looks like 404
+    if image is None or image.inspection_id != inspection_id:
         raise AppError(404, "not_found", "Image not found.")
     return image
 
@@ -55,7 +55,6 @@ def upload_image(
 ) -> InspectionImage:
     """Upload one image. The client uploads several images with one request each."""
     _require_inspection(db, inspection_id)
-    # Read at most limit+1 bytes so an oversized upload is rejected without buffering it all.
     chunks: list[bytes] = []
     total = 0
     while chunk := file.file.read(_READ_CHUNK):

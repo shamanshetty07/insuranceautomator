@@ -58,9 +58,6 @@ def result(*rows):
     return FakeResult(FakeBoxes([r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]))
 
 
-# --- conversion -------------------------------------------------------------
-
-
 def test_conversion_keeps_normalized_boxes_and_verbatim_class_names():
     out = detections_from_result(IMAGE_ID, result(([0.1, 0.2, 0.5, 0.6], 0.9, 1.0)), NAMES)
     assert len(out) == 1
@@ -80,10 +77,10 @@ def test_conversion_clamps_to_unit_square():
 @pytest.mark.parametrize(
     "box",
     [
-        [0.5, 0.2, 0.5, 0.6],  # zero width
-        [0.1, 0.6, 0.5, 0.6],  # zero height
-        [1.1, 0.2, 1.5, 0.6],  # entirely outside: collapses to x=1
-        [0.6, 0.2, 0.5, 0.6],  # inverted
+        [0.5, 0.2, 0.5, 0.6],
+        [0.1, 0.6, 0.5, 0.6],
+        [1.1, 0.2, 1.5, 0.6],
+        [0.6, 0.2, 0.5, 0.6],
         [math.nan, 0.2, 0.5, 0.6],
         [0.1, 0.2, math.inf, 0.6],
     ],
@@ -99,9 +96,6 @@ def test_conversion_drops_non_finite_confidence():
 def test_conversion_handles_no_boxes():
     assert detections_from_result(IMAGE_ID, FakeResult(None), NAMES) == []
     assert detections_from_result(IMAGE_ID, result(), NAMES) == []
-
-
-# --- adapter with a fake YOLO class -----------------------------------------
 
 
 class FakeYOLO:
@@ -153,7 +147,7 @@ def test_adapter_loads_hashes_and_passes_parameters(fake_yolo, weights, tmp_path
     call = model.predict_calls[0]
     assert (call["conf"], call["iou"], call["imgsz"], call["max_det"], call["device"]) == (0.3, 0.5, 320, 7, "cpu")
     assert call["classes"] is None and call["save"] is False
-    assert call["source"].size == (80, 40) and call["source"].mode == "RGB"  # decoded with Pillow
+    assert call["source"].size == (80, 40) and call["source"].mode == "RGB"
     assert [d.damage_type for d in out] == ["scratch"]
 
 
@@ -181,10 +175,7 @@ def test_adapter_refuses_missing_weights_before_importing(monkeypatch, tmp_path)
     with pytest.raises(FileNotFoundError):
         ultralytics_detector.UltralyticsDetector(tmp_path / "missing.pt", "m", "v", CONFIG)
     with pytest.raises(FileNotFoundError):
-        ultralytics_detector.UltralyticsDetector(tmp_path, "m", "v", CONFIG)  # a directory
-
-
-# --- provider ----------------------------------------------------------------
+        ultralytics_detector.UltralyticsDetector(tmp_path, "m", "v", CONFIG)
 
 
 @pytest.fixture(autouse=True)
@@ -254,7 +245,7 @@ def test_provider_status_does_not_load_and_get_caches(fake_yolo, weights, ultral
 
     status = provider.status()
     assert status.available is True
-    assert status.classes is None and status.weights_sha256 is None  # not loaded yet
+    assert status.classes is None and status.weights_sha256 is None
     assert status.config.confidence_threshold == 0.25
     assert fake_yolo.instances == []
 
@@ -278,9 +269,6 @@ def test_provider_load_failure_is_unavailable_and_not_cached(monkeypatch, weight
         provider.get()
     assert str(weights) not in str(excinfo.value)
     assert provider_module._loaded == {}
-
-
-# --- settings / config validation ---------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -324,9 +312,6 @@ def test_duration_is_null_until_completed():
     assert DetectionRunRead.model_validate(done).duration_ms == 1500
 
 
-# --- status endpoint (real provider, no DB) ------------------------------------
-
-
 def test_status_endpoint_disabled(plain_client):
     app.dependency_overrides[get_settings] = lambda: Settings(database_url=NO_DB)
     try:
@@ -348,7 +333,7 @@ def test_status_endpoint_available_without_leaking_paths(plain_client, fake_yolo
     assert body["available"] is True and body["model_name"] == "damage-yolo"
     assert set(body["config"]) == set(json.loads(CONFIG.model_dump_json()))
     assert str(weights.parent) not in response.text
-    assert fake_yolo.instances == []  # status never loads the model
+    assert fake_yolo.instances == []
 
 
 def test_default_dependency_uses_settings_provider():

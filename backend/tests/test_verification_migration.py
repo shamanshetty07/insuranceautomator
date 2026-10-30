@@ -120,7 +120,7 @@ def test_new_constraints(at_0003):
         dict(vd="bogus"),
         dict(ct="bogus"),
         dict(lbl="omitted_damage", vd="supported"),
-        dict(claim_id="c1"),  # first is fine; see below for duplicate
+        dict(claim_id="c1"),
     ]
     for kw in bad[:3]:
         with pytest.raises(IntegrityError):
@@ -128,9 +128,9 @@ def test_new_constraints(at_0003):
                 _new_result(conn, **kw)
     with at_0003.begin() as conn:
         _new_result(conn, claim_id="c1", ct=ClaimType.DAMAGE_TYPE.value, vd=Verdict.SUPPORTED.value)
-        _new_result(conn, lbl=None)  # NULL label accepted
-        _new_result(conn)  # two NULL claim_ids allowed
-        _new_result(conn, lbl="omitted_damage")  # omitted with NULL verdict is fine
+        _new_result(conn, lbl=None)
+        _new_result(conn)
+        _new_result(conn, lbl="omitted_damage")
     with pytest.raises(IntegrityError):
         with at_0003.begin() as conn:
             _new_result(conn, claim_id="c1")
@@ -193,7 +193,6 @@ def test_round_trip(at_0003):
 
 
 def test_model_matches_migrated_schema(db_engine):
-    # db_engine is at head here (other fixtures restore it on teardown).
     table = VerificationResult.__table__
     with db_engine.connect() as conn:
         info = {

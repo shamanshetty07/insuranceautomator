@@ -8,7 +8,6 @@ import { DetectionResultCard } from "./DetectionResultCard";
 
 interface Props {
   inspectionId: string;
-  /** Changes whenever images are uploaded or deleted, so results are refetched. */
   refreshKey?: number;
 }
 
@@ -20,7 +19,6 @@ export function DetectionSection({ inspectionId, refreshKey = 0 }: Props) {
   );
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-  // Guards double submits before React re-renders the disabled button.
   const inFlight = useRef(false);
 
   const images = results.state.status === "success" ? results.state.data[0].items : [];

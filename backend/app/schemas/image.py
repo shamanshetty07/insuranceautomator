@@ -15,11 +15,9 @@ class ImageRead(BaseModel):
     media_type: str
     file_size_bytes: int
     sha256: str | None
-    # Pixel size of the stored, orientation-normalized image. Normalized bounding
-    # boxes (0-1, origin top-left, y down) refer to exactly this image.
     width_px: int | None
     height_px: int | None
-    exif_orientation: int | None  # original EXIF value; metadata only
+    exif_orientation: int | None
     image_order: int
     created_at: datetime
 

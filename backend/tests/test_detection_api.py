@@ -30,7 +30,7 @@ class FakeDetector:
         self.calls: list[ImageRef] = []
 
     def detect(self, images: list[ImageRef]) -> list[Detection]:
-        assert len(images) == 1  # the service runs one image per run
+        assert len(images) == 1
         self.calls.append(images[0])
         return self.behavior(images[0])
 
@@ -106,16 +106,15 @@ def test_happy_path_persists_runs_and_predictions(client, db_session, use_detect
     assert run["weights_sha256"] == "b" * 64
     assert run["config"]["confidence_threshold"] == 0.25
     assert run["completed_at"] is not None and run["duration_ms"] >= 0
-    assert [p["damage_type"] for p in run["predictions"]] == ["dent", "scratch"]  # confidence desc
+    assert [p["damage_type"] for p in run["predictions"]] == ["dent", "scratch"]
     assert run["predictions"][0]["bounding_box"] == BOX
-    # A run that found nothing is a valid, completed result.
     assert items[1]["status"] == "completed" and items[1]["predictions"] == []
 
     db_session.expire_all()
     stored = db_session.scalars(select(DetectionRun).order_by(DetectionRun.created_at)).all()
     assert [r.status for r in stored] == [RunStatus.COMPLETED, RunStatus.COMPLETED]
     stored_config = dict(stored[0].config)
-    assert set(stored_config.pop("runtime")) == {"ultralytics", "torch"}  # server-recorded versions
+    assert set(stored_config.pop("runtime")) == {"ultralytics", "torch"}
     assert stored_config == CONFIG.model_dump(mode="json")
     preds = db_session.scalars(select(DamagePrediction)).all()
     assert {p.damage_type for p in preds} == {"dent", "scratch"}
@@ -177,8 +176,8 @@ def test_invalid_detector_output_fails_the_run_without_partial_predictions(clien
 @pytest.mark.parametrize(
     "detection",
     [
-        Detection(image_id=uuid.uuid4(), damage_type="dent", confidence=0.5),  # foreign image id
-        None,  # confidence out of range (built per image below)
+        Detection(image_id=uuid.uuid4(), damage_type="dent", confidence=0.5),
+        None,
     ],
 )
 def test_detector_contract_violations_fail_the_run(client, use_detector, detection):
@@ -210,7 +209,7 @@ def test_missing_file_fails_that_run_without_calling_detector(client, db_session
 
 def test_image_deleted_during_inference_is_dropped_from_response(client, db_engine, use_detector):
     def behavior(ref: ImageRef) -> list[Detection]:
-        with db_engine.begin() as conn:  # another connection deletes the image mid-run
+        with db_engine.begin() as conn:
             conn.execute(text("DELETE FROM inspection_images WHERE id = :id"), {"id": ref.image_id})
         return one_dent(ref)
 
@@ -228,7 +227,7 @@ def test_run_is_committed_as_running_before_inference(client, db_engine, use_det
     seen: list[tuple[str, object]] = []
 
     def behavior(ref: ImageRef) -> list[Detection]:
-        with db_engine.connect() as conn:  # another connection sees only committed state
+        with db_engine.connect() as conn:
             seen.extend(conn.execute(text("SELECT status, completed_at FROM detection_runs")).all())
         return []
 
@@ -304,7 +303,7 @@ def test_listing_latest_and_all_runs(client, use_detector):
     assert [i["inspection_image_id"] for i in latest] == [first, second]
     assert [i["id"] for i in latest] == [r["id"] for r in rerun]
     assert len(everything) == 4
-    assert {i["id"] for i in everything[2:]} == initial  # newest first
+    assert {i["id"] for i in everything[2:]} == initial
     created = [i["created_at"] for i in everything]
     assert created == sorted(created, reverse=True)
 

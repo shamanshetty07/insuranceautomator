@@ -8,7 +8,6 @@ import { StoredImageGrid } from "./StoredImageGrid";
 
 interface Props {
   inspectionId: string;
-  /** Called after an upload or delete changes the stored images. */
   onChange?: () => void;
 }
 

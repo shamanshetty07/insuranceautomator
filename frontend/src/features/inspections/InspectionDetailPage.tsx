@@ -8,11 +8,11 @@ import { formatDateTime } from "../../lib/format";
 import { useAsync } from "../../lib/useAsync";
 import { DetectionSection } from "../detections/DetectionSection";
 import { ImagesSection } from "../images/ImagesSection";
+import { ReportSection } from "../reports/ReportSection";
 
 export function InspectionDetailPage() {
   const { inspectionId = "" } = useParams();
   const { state, reload } = useAsync(() => getInspection(inspectionId), [inspectionId]);
-  // Bumped on image upload/delete so detection results refetch the image list.
   const [imagesVersion, setImagesVersion] = useState(0);
 
   return (
@@ -50,9 +50,7 @@ export function InspectionDetailPage() {
           </dl>
           <ImagesSection inspectionId={state.data.id} onChange={() => setImagesVersion((v) => v + 1)} />
           <DetectionSection inspectionId={state.data.id} refreshKey={imagesVersion} />
-          <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">
-            Reports and verification will appear here in later phases.
-          </p>
+          <ReportSection inspectionId={state.data.id} refreshKey={imagesVersion} />
         </>
       )}
     </div>

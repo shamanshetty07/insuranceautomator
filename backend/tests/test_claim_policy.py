@@ -66,15 +66,12 @@ def test_global_invariants(ctype, verdict, integ, assoc, det):
         assert integ is OK and assoc is ASSOC and ctype in VISUAL
     if verdict is None:
         assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
-    # An insufficient-evidence outcome is never final without a human, whatever produced it.
     if d.verdict is Verdict.INSUFFICIENT_EVIDENCE:
         assert d.needs_human_review
-    # A visual verdict without review needs corroborating detection; missing, failed or
-    # incomparable detection never gets less scrutiny than "nothing detected".
     if d.verdict is Verdict.SUPPORTED and not d.needs_human_review:
         assert det is DetectionMatch.MATCHES_CLAIM
     if d.verdict is Verdict.CONTRADICTED and ctype in VISUAL:
-        assert d.needs_human_review  # a visual contradiction is never final without a human
+        assert d.needs_human_review
     if d.verdict is not Verdict.INSUFFICIENT_EVIDENCE and det in UNCORROBORATED:
         assert d.needs_human_review
 
@@ -103,7 +100,6 @@ def test_supported_passthrough(ctype):
 
 @pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
 def test_contradicted_with_conflicting_detection_still_needs_review(ctype):
-    # claim-policy-4: a conflict comes from the report's own wording/crops, not independent evidence.
     d = evaluate_claim(make(ctype, verdict=Verdict.CONTRADICTED, det=DetectionMatch.CONFLICTS_WITH_CLAIM))
     assert (d.verdict, d.needs_human_review, d.reason_codes) == (
         Verdict.CONTRADICTED, True, (ReasonCode.DETECTION_CONFLICT_UNCONFIRMED,))
@@ -126,17 +122,17 @@ def test_regression_off_vocabulary_damage_type_never_finalises_a_contradiction()
                            damage_type="shattered glass", image_ids=[img], prediction_ids=[pred])
     det, _ = detection_signal(claim, [img], {pred: PredictionFacts(img, run, "glass shatter", None)},
                               {img: run}, {img: 1})
-    assert det is DetectionMatch.CONFLICTS_WITH_CLAIM  # vocabulary mismatch reads as a conflict
+    assert det is DetectionMatch.CONFLICTS_WITH_CLAIM
     d = evaluate_claim(make(ClaimType.DAMAGE_TYPE, verdict=Verdict.CONTRADICTED, det=det))
-    assert d.verdict is Verdict.CONTRADICTED and d.needs_human_review  # before the fix: no review
+    assert d.verdict is Verdict.CONTRADICTED and d.needs_human_review
 
 
 @pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
 @pytest.mark.parametrize("v", [Verdict.SUPPORTED, Verdict.CONTRADICTED])
 @pytest.mark.parametrize("det,reason", [
-    (DetectionMatch.UNAVAILABLE, ReasonCode.DETECTION_UNAVAILABLE),  # never run / failed / running
-    (DetectionMatch.INCONCLUSIVE, ReasonCode.DETECTION_INCONCLUSIVE),  # not comparable
-    (DetectionMatch.NOT_APPLICABLE, ReasonCode.DETECTION_INCONCLUSIVE),  # defensive: visual claim
+    (DetectionMatch.UNAVAILABLE, ReasonCode.DETECTION_UNAVAILABLE),
+    (DetectionMatch.INCONCLUSIVE, ReasonCode.DETECTION_INCONCLUSIVE),
+    (DetectionMatch.NOT_APPLICABLE, ReasonCode.DETECTION_INCONCLUSIVE),
 ])
 def test_uncorroborated_visual_claim_keeps_verifier_verdict_but_needs_review(ctype, v, det, reason):
     d = evaluate_claim(make(ctype, verdict=v, det=det))
@@ -173,14 +169,12 @@ def test_gates_never_bypass_hidden_damage_or_evidence_checks(flags, ctype, det):
 
 
 def test_policy_version_bumped_for_review_routing_change():
-    assert cp.POLICY_VERSION == "claim-policy-4"
+    assert cp.POLICY_VERSION == "claim-policy-5"
 
 
 @pytest.mark.parametrize("det", list(DetectionMatch))
 @pytest.mark.parametrize("ctype", sorted(VISUAL))
 def test_verifier_insufficient_always_needs_review(ctype, det):
-    # Regression: rule 17 used to return no review. Conflicting or matching detection
-    # must not turn the verifier's "can't tell" into a final answer either way.
     d = evaluate_claim(make(ctype, verdict=Verdict.INSUFFICIENT_EVIDENCE, det=det))
     assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
     assert d.reason_codes == (ReasonCode.VERIFIER_INSUFFICIENT,)
@@ -297,7 +291,7 @@ def test_rule_order_type_before_integrity():
     assert d.reason_codes == (ReasonCode.HIDDEN_DAMAGE_NOT_VISIBLE,)
     d = evaluate_claim(make(integrity=EvidenceIntegrity.CORRUPT, association=EvidenceAssociation.UNRESOLVED,
                             verdict=None))
-    assert d.reason_codes == (ReasonCode.EVIDENCE_UNRESOLVED,)  # association before integrity
+    assert d.reason_codes == (ReasonCode.EVIDENCE_UNRESOLVED,)
     d = evaluate_claim(make(integrity=EvidenceIntegrity.UNCHECKED, association=EvidenceAssociation.NONE_CITED,
                             verdict=None))
     assert d.reason_codes == (ReasonCode.NO_EVIDENCE_CITED,)
@@ -317,3 +311,19 @@ def test_module_is_pure_imports():
     for banned in ("sqlalchemy", "torch", "ultralytics", "requests", "httpx", "logging", "os"):
         assert not any(i == banned or i.startswith(banned + ".") for i in imports)
     assert not any(i.startswith("app.models") or i.startswith("app.db") for i in imports)
+
+
+@pytest.mark.parametrize("ctype", sorted(VISUAL))
+def test_supported_by_a_non_independent_verifier_needs_review(ctype):
+    d = evaluate_claim(make(ctype, det=DetectionMatch.MATCHES_CLAIM, verifier_independent=False))
+    assert (d.verdict, d.needs_human_review, d.reason_codes) == (
+        Verdict.SUPPORTED, True, (ReasonCode.VERIFIER_NOT_INDEPENDENT,))
+    assert not evaluate_claim(make(ctype, det=DetectionMatch.MATCHES_CLAIM)).needs_human_review
+
+
+@pytest.mark.parametrize("ctype", list(ClaimType))
+@pytest.mark.parametrize("verdict", [*Verdict, None])
+@pytest.mark.parametrize("det", list(DetectionMatch))
+def test_non_independent_verifier_never_yields_an_unreviewed_outcome(ctype, verdict, det):
+    d = evaluate_claim(make(ctype, verdict=verdict, det=det, verifier_independent=False))
+    assert d.needs_human_review

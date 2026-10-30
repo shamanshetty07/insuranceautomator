@@ -1,5 +1,4 @@
-"""Local VLM adapters with a fake runner: no model, no weights, no torch, no database
-(except the one requires_db end-to-end test, skipped without TEST_DATABASE_URL)."""
+"""Local VLM adapters with a fake runner: no model, no weights, no torch, no database (except the one requires_db end-to-end test, skipped without TEST_DATABASE_URL)."""
 
 import json
 import sys
@@ -99,9 +98,6 @@ def generator(runner, limits=LIMITS):
     return QwenStructuredReportGenerator(runner, limits)
 
 
-# --- generator: valid output -------------------------------------------------------------
-
-
 def test_valid_output_maps_aliases_to_real_ids(evidence):
     runner = FakeRunner([report_json(DENT_CLAIM, PRESENCE_CLAIM)])
     report = generator(runner).generate_structured(evidence)
@@ -110,7 +106,6 @@ def test_valid_output_maps_aliases_to_real_ids(evidence):
     assert first.image_ids == (IMG1,) and first.prediction_ids == (P1,)
     assert first.evidence[0].prediction_id == P1 and first.evidence[0].crop.x_max == 0.5
     assert second.image_ids == (IMG2,) and second.prediction_ids == ()
-    # the report text is exactly the claims: no unverified free prose
     assert report.report_text == "There is a dent on the front door.\nVisible damage is present."
 
 
@@ -119,13 +114,13 @@ def test_prompt_uses_aliases_only_and_marks_detector_output_unverified(evidence)
     generator(runner).generate_structured(evidence)
     (request,) = runner.requests
     text = request.system + request.user_text
-    assert str(IMG1) not in text and str(P1) not in text  # the model never sees ids
+    assert str(IMG1) not in text and str(P1) not in text
     assert "det1 on img1: class=dent confidence=0.82 box=[0.100, 0.200, 0.500, 0.600]" in request.user_text
     assert "det2 on img2: class=scratch confidence=0.40 box=none" in request.user_text
     assert "unverified" in request.user_text and "Never state repair costs" in request.system
     assert len(request.images) == 2 and all(i.mode == "RGB" for i in request.images)
-    assert request.images[1].size[0] * request.images[1].size[1] <= LIMITS.max_image_pixels  # downscaled
-    assert request.images[0].size == (64, 48)  # never upscaled
+    assert request.images[1].size[0] * request.images[1].size[1] <= LIMITS.max_image_pixels
+    assert request.images[0].size == (64, 48)
 
 
 def test_fenced_json_is_accepted(evidence):
@@ -145,15 +140,12 @@ def test_out_of_scope_claim_types_are_kept_for_the_policy(evidence):
     assert [c.claim_type for c in report.claims.claims] == [ClaimType.REPAIR_COST, ClaimType.HIDDEN_STRUCTURAL_DAMAGE]
 
 
-# --- generator: rejected output (whole output fails closed) -------------------------------
-
-
 @pytest.mark.parametrize("raw,code", [
     ("", "empty"),
     ("   ", "empty"),
     ("Sure! Here is the JSON: {}", "not_json"),
     ("{not json", "not_json"),
-    ('{"claims": [], "claims": []}', "not_json"),  # duplicate keys
+    ('{"claims": [], "claims": []}', "not_json"),
     ('{"claims": [{"text": "x", "type": "damage_type", "images": ["img1"], "confidence": NaN}]}', "not_json"),
     ("x" * 64_001, "too_long"),
     ('{"claims": "none"}', "schema"),
@@ -179,16 +171,13 @@ def test_bad_output_is_rejected_whole(evidence, raw, code):
     with pytest.raises(VlmOutputError) as exc:
         generator(FakeRunner([raw])).generate_structured(evidence)
     assert exc.value.code == code
-    assert raw[:40] not in str(exc.value) or raw == ""  # model output never echoed to clients
+    assert raw[:40] not in str(exc.value) or raw == ""
 
 
 def test_load_json_object_strips_exactly_one_fence():
     assert load_json_object("```\n{\"a\": 1}\n```") == {"a": 1}
     with pytest.raises(VlmOutputError):
         load_json_object("```json\n```json\n{}\n```\n```")
-
-
-# --- generator: inputs ---------------------------------------------------------------------
 
 
 def test_detection_without_stored_id_is_refused(images):
@@ -218,9 +207,6 @@ def test_limits_are_validated():
         VlmLimits(timeout_seconds=0)
 
 
-# --- runner: timeout, busy, failures ----------------------------------------------------------
-
-
 def _request():
     return VlmRequest("s", "u", (), 8, 1.0)
 
@@ -242,19 +228,16 @@ def test_timeout_then_busy_until_the_stuck_inference_ends():
     slow = FakeRunner(["late"], delay=0.6)
     with pytest.raises(VlmTimeout):
         call_runner(slow, _request(), 0.1, lock=lock)
-    with pytest.raises(VlmBusy):  # the timed-out inference still holds the model
+    with pytest.raises(VlmBusy):
         call_runner(FakeRunner(["x"]), _request(), 0.1, lock=lock)
     time.sleep(0.7)
-    assert call_runner(FakeRunner(["ok"]), _request(), 1, lock=lock) == "ok"  # lock released
+    assert call_runner(FakeRunner(["ok"]), _request(), 1, lock=lock) == "ok"
 
 
 def test_generator_passes_a_cooperative_time_budget(evidence):
     runner = FakeRunner([report_json()])
     generator(runner, VlmLimits(timeout_seconds=60, max_images=2)).generate_structured(evidence)
     assert runner.requests[0].max_time_seconds == 55 and runner.requests[0].max_new_tokens == 1024
-
-
-# --- verifier ---------------------------------------------------------------------------------
 
 
 def verifier(runner):
@@ -264,14 +247,14 @@ def verifier(runner):
 def test_verifier_one_inference_per_claim_and_label_passthrough(images):
     runner = FakeRunner([
         '{"label": "supported", "explanation": "A dent is visible."}',
-        '{"label": "omitted_damage", "explanation": "x"}',  # passed through; the service decides
+        '{"label": "omitted_damage", "explanation": "x"}',
     ])
     ev = EvidenceBundle(images=[ImageRef(IMG1, images[0])])
     out = verifier(runner).verify([ReportClaim("a dent"), ReportClaim("b")], ev)
     assert [(v.claim_text, v.label) for v in out] == [("a dent", "supported"), ("b", "omitted_damage")]
     assert out[0].verifier.name == "fake-vlm" and out[0].evidence_reference == {"image_ids": [str(IMG1)]}
     assert "<<<a dent>>>" in runner.requests[0].user_text
-    assert "omitted_damage" not in runner.requests[0].system  # not offered as an answer
+    assert "omitted_damage" not in runner.requests[0].system
 
 
 def test_verifier_never_sees_detections(evidence):
@@ -312,12 +295,9 @@ def test_configs_record_greedy_decoding_and_prompt_versions():
     assert (v.prompt_version, v.sampling.temperature, v.sampling.max_new_tokens) == ("qwen-verify-1", 0, 256)
 
 
-# --- generation -> claim policy (the hand-off, no database) --------------------------------------
-
-
 def test_generated_claims_flow_into_the_claim_policy(evidence):
     """Generator output -> detection_signal -> evaluate_claim, with a verifier verdict."""
-    mismatched_text = {**DENT_CLAIM, "text": "There is a scratch on the front door."}  # says scratch, typed dent
+    mismatched_text = {**DENT_CLAIM, "text": "There is a scratch on the front door."}
     raw = report_json(DENT_CLAIM, mismatched_text,
                       {"text": "Repair would cost 900.", "type": "repair_cost", "images": ["img1"]})
     report = generator(FakeRunner([raw])).generate_structured(evidence)
@@ -332,11 +312,8 @@ def test_generated_claims_flow_into_the_claim_policy(evidence):
             claim_policy.EvidenceAssociation.ASSOCIATED, match)))
     corroborated, mismatched, cost = decisions
     assert (corroborated.verdict, corroborated.needs_human_review) == (Verdict.SUPPORTED, False)
-    assert mismatched.needs_human_review  # text and damage_type disagree -> never final
+    assert mismatched.needs_human_review
     assert (cost.verdict, cost.needs_human_review) == (Verdict.INSUFFICIENT_EVIDENCE, True)
-
-
-# --- evidence bundle from stored runs ---------------------------------------------------------------
 
 
 def _run(image_id, status, preds):
@@ -358,7 +335,7 @@ def test_evidence_bundle_uses_completed_runs_only_with_prediction_ids(tmp_path):
     assert [r.image_id for r in bundle.images] == [IMG1, IMG2, img3]
     assert [(d.prediction_id, d.damage_type) for d in bundle.detections] == [(P2, "scratch"), (P1, "dent")]
     assert bundle.detections[0].bounding_box == BOX
-    prompts.build_alias_map(bundle)  # every detection is citable
+    prompts.build_alias_map(bundle)
 
 
 def test_evidence_bundle_refuses_ambiguous_input(tmp_path):
@@ -368,9 +345,6 @@ def test_evidence_bundle_refuses_ambiguous_input(tmp_path):
         evidence_bundle([(IMG1, tmp_path)], [_run(IMG1, RunStatus.COMPLETED, [])] * 2)
     with pytest.raises(ValueError):
         evidence_bundle([(IMG1, tmp_path), (IMG1, tmp_path)], [])
-
-
-# --- model directory checks (no transformers import) --------------------------------------------------
 
 
 def _model_dir(tmp_path, model_type="qwen2_vl", extra=()):
@@ -418,9 +392,6 @@ def test_pin_mismatch_refused_before_transformers_is_imported(tmp_path, monkeypa
 
 def test_importing_the_package_does_not_import_model_libraries():
     assert "transformers" not in sys.modules and "torch" not in sys.modules
-
-
-# --- provider -----------------------------------------------------------------------------------------
 
 
 def _settings(tmp_path, **kw):
@@ -496,9 +467,6 @@ def test_vlm_settings_validation(tmp_path):
             _settings(tmp_path, **bad)
 
 
-# --- end to end with the real verification service (needs a disposable database) ------------------
-
-
 @requires_db
 def test_verify_report_with_the_qwen_verifier(db_session, storage):
     from tests.test_verification_service import World
@@ -513,7 +481,7 @@ def test_verify_report_with_the_qwen_verifier(db_session, storage):
     run = world.run([a, b], QwenClaimVerifier(runner, LIMITS))
     rows = world.results(run)
     assert run.status is RunStatus.COMPLETED and run.verifier_model == "fake-vlm"
-    assert rows["c1"].verdict is Verdict.SUPPORTED and rows["c1"].needs_human_review  # uncited detection
+    assert rows["c1"].verdict is Verdict.SUPPORTED and rows["c1"].needs_human_review
     assert rows["c2"].verification_label is None and rows["c2"].needs_human_review
     assert all(not r.images or r.images[0].mode == "RGB" for r in runner.requests)
-    assert all("<<<" in r.user_text for r in runner.requests)  # only the claim text is sent
+    assert all("<<<" in r.user_text for r in runner.requests)

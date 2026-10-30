@@ -1,9 +1,4 @@
-"""Hardening: run liveness / recovery races, image-size validation, checkpoint safeguards.
-
-DB-less tests use fake sessions, a fake engine and a fake `ultralytics` package (no
-weights, no torch). Tests marked requires_db exercise real Postgres row locking and
-conditional UPDATEs and are skipped without TEST_DATABASE_URL.
-"""
+"""Hardening: run liveness / recovery races, image-size validation, checkpoint safeguards."""
 
 import contextlib
 import importlib.machinery
@@ -35,10 +30,7 @@ from tests.factories import make_image, make_run
 
 NO_DB = "postgresql+psycopg://none:none@127.0.0.1:1/none"
 CONFIG = DetectionConfig(confidence_threshold=0.25, iou_threshold=0.45, image_size=640, max_detections=100)
-SHA_OF_W = "50e721e49c013f00c62cf59f2163542a9d8df02464efeb615d31051b0fddc326"  # sha256(b"w")
-
-
-# --- fakes ---------------------------------------------------------------------
+SHA_OF_W = "50e721e49c013f00c62cf59f2163542a9d8df02464efeb615d31051b0fddc326"
 
 
 class FakeSession:
@@ -62,7 +54,6 @@ class FakeSession:
 
     def rollback(self):
         self.rollbacks += 1
-        # Like a real rollback: pending objects (predictions) are discarded.
         self.added = self.added[:1]
 
     def refresh(self, obj, with_for_update=False):
@@ -146,9 +137,6 @@ def _fail_like_recovery(obj):
     obj.completed_at = datetime.now(UTC)
 
 
-# --- recovery race: worker side (no DB) ----------------------------------------
-
-
 def test_new_run_starts_with_a_heartbeat(target):
     tgt, storage = target
     db = FakeSession()
@@ -161,22 +149,21 @@ def test_worker_locks_the_row_and_rechecks_before_its_final_write(target):
     tgt, storage = target
     db = FakeSession()
     svc._run_one(db, storage, FakeDetector(one_dent), tgt, RecordingHeartbeat())
-    assert db.refreshed == [True]  # SELECT ... FOR UPDATE before writing the outcome
+    assert db.refreshed == [True]
     run = db.added[0]
     assert run.status is RunStatus.COMPLETED and run.error_message is None
-    assert len(db.added) == 2  # the run and its prediction
+    assert len(db.added) == 2
 
 
 def test_worker_keeps_a_failure_written_by_recovery_and_discards_predictions(target):
-    # Recovery committed `failed` while this worker was still inferring.
     tgt, storage = target
     db = FakeSession(on_refresh=_fail_like_recovery)
     run_id = svc._run_one(db, storage, FakeDetector(one_dent), tgt, RecordingHeartbeat())
     run = db.added[0]
-    assert run_id == run.id  # the run exists and is final
+    assert run_id == run.id
     assert (run.status, run.error_message) == (RunStatus.FAILED, svc.INTERRUPTED_MESSAGE)
-    assert db.added == [run]  # predictions never reached the session
-    assert db.commits == 1  # only the create; the worker wrote nothing over the failure
+    assert db.added == [run]
+    assert db.commits == 1
 
 
 def test_worker_does_not_overwrite_recovery_failure_on_its_own_failure_path(target):
@@ -188,7 +175,7 @@ def test_worker_does_not_overwrite_recovery_failure_on_its_own_failure_path(targ
 
     svc._run_one(db, storage, FakeDetector(boom), tgt, RecordingHeartbeat())
     run = db.added[0]
-    assert run.error_message == svc.INTERRUPTED_MESSAGE  # not replaced by "Detection failed..."
+    assert run.error_message == svc.INTERRUPTED_MESSAGE
     assert db.commits == 1
 
 
@@ -228,10 +215,10 @@ def test_heartbeat_thread_beats_while_open_and_stops_on_exit():
     beats = len(engine.statements)
     assert beats >= 2
     time.sleep(0.05)
-    assert len(engine.statements) == beats  # stopped
+    assert len(engine.statements) == beats
     sql = str(engine.statements[0].compile()).lower()
     assert sql.startswith("update detection_runs set heartbeat_at")
-    assert "detection_runs.id" in sql and "detection_runs.status" in sql  # only while running
+    assert "detection_runs.id" in sql and "detection_runs.status" in sql
 
 
 def test_heartbeat_failure_is_logged_never_raised(caplog):
@@ -249,14 +236,11 @@ def test_heartbeat_interval_must_be_positive():
 def test_settings_stale_threshold_must_cover_several_heartbeats():
     s = Settings(database_url=NO_DB)
     assert (s.detector_heartbeat_seconds, s.detector_stale_run_minutes) == (30, 30)
-    Settings(database_url=NO_DB, detector_stale_run_minutes=2, detector_heartbeat_seconds=30)  # 120 >= 4*30
+    Settings(database_url=NO_DB, detector_stale_run_minutes=2, detector_heartbeat_seconds=30)
     with pytest.raises(ValidationError):
         Settings(database_url=NO_DB, detector_stale_run_minutes=1, detector_heartbeat_seconds=30)
     with pytest.raises(ValidationError):
         Settings(database_url=NO_DB, detector_heartbeat_seconds=0)
-
-
-# --- recovery race: real database ----------------------------------------------
 
 
 def _image(db_session):
@@ -268,7 +252,6 @@ def _image(db_session):
 
 
 def _stale_running_run(image_id):
-    # Built by id (not via make_run) so it can live in a session other than db_session.
     return DetectionRun(
         inspection_image_id=image_id, model_name="yolo", model_version="1",
         status=RunStatus.RUNNING, created_at=datetime.now(UTC) - timedelta(hours=2),
@@ -293,7 +276,7 @@ def test_recovery_spares_an_old_run_whose_worker_is_still_beating(db_session):
     assert live.status is RunStatus.RUNNING and young_legacy.status is RunStatus.RUNNING
     assert dead.status is RunStatus.FAILED and legacy.status is RunStatus.FAILED
     assert dead.error_message == svc.INTERRUPTED_MESSAGE and dead.completed_at is not None
-    assert svc.fail_stale_runs(db_session, timedelta(minutes=30)) == 0  # idempotent
+    assert svc.fail_stale_runs(db_session, timedelta(minutes=30)) == 0
 
 
 @requires_db
@@ -329,7 +312,6 @@ def test_worker_finishing_after_recovery_keeps_the_failure(db_engine, db_session
         run = _stale_running_run(image.id)
         worker_db.add(run)
         worker_db.commit()
-        # Recovery, in its own session, fails the run (its heartbeat is stale).
         with factory() as recovery_db:
             assert svc.fail_stale_runs(recovery_db, timedelta(minutes=30)) == 1
         prediction = DamagePrediction(detection_run_id=run.id, damage_type="dent", confidence=0.9)
@@ -348,7 +330,7 @@ def test_recovery_waits_for_a_finishing_worker_and_then_changes_nothing(db_engin
         run = _stale_running_run(image.id)
         worker_db.add(run)
         worker_db.commit()
-        worker_db.refresh(run, with_for_update=True)  # the worker's final write holds the row lock
+        worker_db.refresh(run, with_for_update=True)
         counts: list[int] = []
 
         def recover():
@@ -358,11 +340,11 @@ def test_recovery_waits_for_a_finishing_worker_and_then_changes_nothing(db_engin
         t = threading.Thread(target=recover)
         t.start()
         time.sleep(0.3)
-        assert t.is_alive()  # blocked on the worker's row lock
+        assert t.is_alive()
         run.status, run.completed_at = RunStatus.COMPLETED, datetime.now(UTC)
         worker_db.commit()
         t.join(10)
-    assert counts == [0]  # Postgres re-checked status = 'running' after the lock was released
+    assert counts == [0]
     db_session.expire_all()
     stored = db_session.get(DetectionRun, run.id)
     assert (stored.status, stored.error_message) == (RunStatus.COMPLETED, None)
@@ -380,9 +362,6 @@ def test_heartbeat_refreshes_the_stored_row_only_while_running(db_engine, db_ses
     svc.RunHeartbeat(db_engine, done.id, 60).beat()
     db_session.expire_all()
     assert running.heartbeat_at > before and done.heartbeat_at == before
-
-
-# --- image size -----------------------------------------------------------------
 
 
 @pytest.mark.parametrize("bad", [0, -32, -1, 1, 31, 33, 100, 641, 650])
@@ -414,9 +393,6 @@ def test_historical_run_with_unrounded_image_size_stays_readable():
         StoredDetectionConfig.model_validate({**stored, "image_size": 0})
 
 
-# --- checkpoint safeguards (fake ultralytics package; nothing is loaded) ------------
-
-
 def install_fake_ultralytics(monkeypatch, *, safe_load_flag=True, supported=True, stride=None, layout=True):
     """Fake `ultralytics` with the 8.4.191 attributes confirm_safe_load_active reads."""
     pkg = types.ModuleType("ultralytics")
@@ -439,7 +415,7 @@ def install_fake_ultralytics(monkeypatch, *, safe_load_flag=True, supported=True
     pkg.YOLO = YOLO
     for name, module in (("ultralytics", pkg), ("ultralytics.nn", nn), ("ultralytics.nn.tasks", tasks)):
         monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.setenv("ULTRALYTICS_SAFE_LOAD", "0")  # restored (unset) after the test
+    monkeypatch.setenv("ULTRALYTICS_SAFE_LOAD", "0")
     monkeypatch.delenv("ULTRALYTICS_SAFE_LOAD")
     return constructed
 
@@ -462,12 +438,11 @@ def test_safe_load_succeeds_only_when_ultralytics_reports_it_active(monkeypatch,
 
 
 def test_safe_load_refused_when_ultralytics_was_imported_without_it(monkeypatch, weights):
-    # The env var gets set, but Ultralytics already resolved SAFE_LOAD=False at import.
     constructed = install_fake_ultralytics(monkeypatch, safe_load_flag=False)
     with pytest.raises(ud.UnsafeLoadRefused, match="imported before"):
         _load(weights, safe_load=True)
-    assert constructed == []  # the checkpoint was never unpickled
-    assert os.environ.get("ULTRALYTICS_SAFE_LOAD") == "1"  # the env var alone proves nothing
+    assert constructed == []
+    assert os.environ.get("ULTRALYTICS_SAFE_LOAD") == "1"
 
 
 def test_safe_load_refused_when_torch_cannot_restrict(monkeypatch, weights):
@@ -534,15 +509,15 @@ def test_provider_reports_a_refused_safeguard_without_internals(monkeypatch, wei
 
 
 def test_image_size_checked_against_the_loaded_models_own_stride(monkeypatch, weights):
-    install_fake_ultralytics(monkeypatch, stride=[8.0, 16.0, 32.0, 64.0])  # a P6 model
-    cfg = DetectionConfig(**{**CONFIG.model_dump(), "image_size": 352})  # 11 * 32, not a multiple of 64
+    install_fake_ultralytics(monkeypatch, stride=[8.0, 16.0, 32.0, 64.0])
+    cfg = DetectionConfig(**{**CONFIG.model_dump(), "image_size": 352})
     with pytest.raises(ValueError, match="stride 64"):
         ud.UltralyticsDetector(weights, "m", "1", cfg)
-    ud.UltralyticsDetector(weights, "m", "1", CONFIG)  # 640 = 10 * 64
+    ud.UltralyticsDetector(weights, "m", "1", CONFIG)
 
 
 def test_unknown_model_stride_falls_back_to_the_32_rule(monkeypatch, weights, caplog):
-    install_fake_ultralytics(monkeypatch)  # fake model exposes no stride
+    install_fake_ultralytics(monkeypatch)
     with caplog.at_level(logging.WARNING):
         _load(weights)
     assert "Could not read the model stride" in caplog.text

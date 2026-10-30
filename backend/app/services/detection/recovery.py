@@ -1,12 +1,4 @@
-"""Fail detection runs abandoned in `running` (crash, kill, lost commit).
-
-Run:  python -m app.services.detection.recovery
-MANUAL ONLY: nothing schedules it and it does not run at app startup (startup must not
-need the database). Safe to run at any time, from any machine, and concurrently with
-workers and with other recovery processes: a run is failed only if its worker has sent
-no heartbeat for DETECTOR_STALE_RUN_MINUTES (default 30), with one conditional UPDATE
-(see detection_service.fail_stale_runs). Running it twice changes nothing more.
-"""
+"""Fail detection runs abandoned in `running` (crash, kill, lost commit)."""
 
 import sys
 from datetime import timedelta

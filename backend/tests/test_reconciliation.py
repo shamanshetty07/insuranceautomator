@@ -45,7 +45,7 @@ def test_detects_orphaned_file_without_deleting_it(db_session, storage, stored):
     before = _snapshot(storage)
     report = reconcile(db_session, storage)
     assert report.orphaned_files == [orphan]
-    assert _snapshot(storage) == before  # report-only: nothing changed
+    assert _snapshot(storage) == before
     assert storage.exists(orphan)
 
 
@@ -79,7 +79,7 @@ def test_symlinks_are_skipped_not_followed(db_session, storage, stored, tmp_path
     (storage.root / "link").symlink_to(outside, target_is_directory=True)
     report = reconcile(db_session, storage)
     assert report.skipped_symlinks == ["link"]
-    assert report.orphaned_files == []  # nothing inside the link was scanned
+    assert report.orphaned_files == []
 
 
 def test_cli_is_report_only_and_sets_exit_code(db_session, storage, stored, monkeypatch, capsys):

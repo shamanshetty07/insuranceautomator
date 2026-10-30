@@ -24,7 +24,7 @@ def _inspection_with_prediction(db: Session):
 def test_same_inspection_predictions_are_linked_once(db_session: Session):
     _, report, pred = _inspection_with_prediction(db_session)
     assert len(attach_predictions_to_report(db_session, report, [pred.id, pred.id])) == 1
-    assert attach_predictions_to_report(db_session, report, [pred.id]) == []  # idempotent
+    assert attach_predictions_to_report(db_session, report, [pred.id]) == []
     db_session.commit()
     assert [l.damage_prediction_id for l in report.prediction_links] == [pred.id]
 
@@ -45,7 +45,7 @@ def test_mixed_batch_is_rejected_atomically(db_session: Session):
         attach_predictions_to_report(db_session, report_a, [pred_a.id, pred_b.id])
     db_session.rollback()
     db_session.refresh(report_a)
-    assert report_a.prediction_links == []  # the valid one was not linked either
+    assert report_a.prediction_links == []
 
 
 def test_unknown_prediction_id_rejected(db_session: Session):

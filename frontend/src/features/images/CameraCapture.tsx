@@ -24,7 +24,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** Mounted only after the user asks for the camera, so permission is never requested earlier. */
+// Mounted only on request so camera permission is never asked earlier.
 export function CameraCapture({ onCapture, onClose }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -48,7 +48,7 @@ export function CameraCapture({ onCapture, onClose }: Props) {
       .getUserMedia({ video: { facingMode: "environment" }, audio: false })
       .then((stream) => {
         if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop()); // closed before permission resolved
+          stream.getTracks().forEach((t) => t.stop());
           return;
         }
         streamRef.current = stream;
@@ -65,7 +65,6 @@ export function CameraCapture({ onCapture, onClose }: Props) {
     };
   }, [stopStream]);
 
-  // Attach the stream once the <video> element exists.
   useEffect(() => {
     if (phase === "live" && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;

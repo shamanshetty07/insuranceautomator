@@ -44,9 +44,9 @@ def test_response_never_leaks_storage_details(client: TestClient, storage: Image
     text = r.text
     assert "storage_path" not in r.json()
     assert str(storage.root) not in text
-    assert r.json()["original_filename"] == "passwd.jpg"  # display copy only
+    assert r.json()["original_filename"] == "passwd.jpg"
     stored = [p for p in storage.root.rglob("*") if p.is_file()]
-    assert len(stored) == 1 and "passwd" not in stored[0].name  # server-generated name
+    assert len(stored) == 1 and "passwd" not in stored[0].name
 
 
 def test_upload_to_missing_inspection(client: TestClient):
@@ -79,7 +79,7 @@ def test_rejects_empty_non_image_oversized_and_unsupported(client: TestClient, s
 
 def test_real_content_wins_over_declared_mime_type(client: TestClient):
     iid = _inspection(client)
-    r = _upload(client, iid, make_image_bytes("PNG"), "x.jpg", "image/jpeg")  # PNG labelled JPEG
+    r = _upload(client, iid, make_image_bytes("PNG"), "x.jpg", "image/jpeg")
     assert r.status_code == 201 and r.json()["media_type"] == "image/png"
 
 
@@ -112,7 +112,7 @@ def test_image_through_wrong_inspection_is_not_found(client: TestClient):
         r = client.get(f"/api/v1/inspections/{b}/images/{image['id']}{suffix}")
         assert r.status_code == 404
     assert client.delete(f"/api/v1/inspections/{b}/images/{image['id']}").status_code == 404
-    assert client.get(image["content_url"]).status_code == 200  # untouched
+    assert client.get(image["content_url"]).status_code == 200
 
 
 def test_exif_rotated_upload_reports_normalized_dimensions(client: TestClient):
@@ -137,7 +137,7 @@ def test_ordering_is_sequential_and_survives_deletion(client: TestClient):
     assert [i["image_order"] for i in ids] == [0, 1, 2]
     assert client.delete(f"/api/v1/inspections/{iid}/images/{ids[1]['id']}").status_code == 204
     after = _upload(client, iid, color=(9, 9, 200)).json()
-    assert after["image_order"] == 3  # never reuses an order, so no collision
+    assert after["image_order"] == 3
     listing = client.get(f"/api/v1/inspections/{iid}/images").json()["items"]
     assert [i["image_order"] for i in listing] == [0, 2, 3]
 
@@ -149,9 +149,9 @@ def test_duplicate_submission_is_rejected_safely(client: TestClient, storage: Im
     again = _upload(client, iid, data)
     assert (again.status_code, again.json()["error"]["code"]) == (409, "duplicate_image")
     assert client.get(f"/api/v1/inspections/{iid}/images").json()["total"] == 1
-    assert len([p for p in storage.root.rglob("*") if p.is_file()]) == 1  # no stray file
+    assert len([p for p in storage.root.rglob("*") if p.is_file()]) == 1
     other = _inspection(client)
-    assert _upload(client, other, data).status_code == 201  # same photo in another inspection is fine
+    assert _upload(client, other, data).status_code == 201
 
 
 def test_delete_removes_row_and_file(client: TestClient, storage: ImageStorage):
@@ -180,4 +180,4 @@ def test_delete_refused_when_report_provenance_depends_on_it(client: TestClient,
 
     r = client.delete(f"/api/v1/inspections/{iid}/images/{image['id']}")
     assert (r.status_code, r.json()["error"]["code"]) == (409, "image_in_use")
-    assert client.get(image["content_url"]).status_code == 200  # row and file both intact
+    assert client.get(image["content_url"]).status_code == 200

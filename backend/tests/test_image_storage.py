@@ -16,8 +16,8 @@ def test_write_read_delete_and_directory_cleanup(tmp_path):
     assert storage.read(rel) == b"data" and storage.exists(rel)
     storage.delete(rel)
     assert not storage.exists(rel)
-    assert not (storage.root / rel.split("/")[0]).exists()  # empty directory removed
-    storage.delete(rel)  # deleting a missing file is not an error
+    assert not (storage.root / rel.split("/")[0]).exists()
+    storage.delete(rel)
 
 
 def test_write_never_overwrites(tmp_path):

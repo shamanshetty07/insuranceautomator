@@ -43,6 +43,22 @@ A failure on one image does not fail the request: that run is `failed` with a sh
 
 Detection errors: `404 not_found` (inspection, or an `image_ids` entry that is not an image of this inspection), `409 no_images`, `422 validation_error` (empty `image_ids`, malformed ids, unknown body fields), `503 detector_unavailable` (no detector configured or the model failed to load; no runs are created). Validation (404/409/422) happens before the model is loaded.
 
+### Reports and claim verification
+
+Synchronous, like detection (no job queue exists). All output is a model prediction, not ground truth.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/v1/vlm` | `{available, backend, reason, model_name, model_version, weights_sha256}`. Never loads the model. |
+| POST | `/api/v1/inspections/{id}/reports` | Optional body `{}` (no options; unknown fields → 422). Generates one report from every image (in `image_order`) and the latest detection run per image, stores it with its claims exactly as generated, and returns `201` with the report detail (`verification: null`). Nothing is stored if any step fails. Does not verify. |
+| GET | `/api/v1/inspections/{id}/reports` | `{items: [summary]}`, newest first. |
+| GET | `/api/v1/reports/{id}` | Report detail: the claims as generated, each with the result of the report's **latest** verification run only (`result: null` when not verified). |
+| POST | `/api/v1/reports/{id}/verifications` | Optional body `{}`. Verifies the stored claims in a new run and returns `201` with the report detail. The claims are never modified. A run in which every model call failed is still returned (`status: failed`). |
+
+Summary: `{id, inspection_id, content, model_name, model_version, evidence_strategy, created_at, claim_count}`. Detail adds `generation_config` (prompt version, sampling, model weights digest and package versions, limits, and the image / detection-run ids given; no paths), `claims` and `verification`. Claim: `{id, claim_id, position, text, claim_type, damage_type, image_ids, prediction_ids, evidence: [{image_id, prediction_id, crop, note}], result}`; `result`: `{verdict, needs_human_review, policy_reason_codes, verification_label, explanation}` (`verdict` is the final policy outcome, `verification_label` the verifier's raw answer). Verification: `{id, report_id, verifier_model, verifier_version, status, error_message, policy_version, verifier_independent, created_at, completed_at, review_count}`.
+
+Report errors: `404 not_found`; `409 no_images`, `image_unavailable`, `too_many_images`, `too_many_detections`, `uncitable_detection`, `image_unreadable`, `evidence_changed` (an image or prediction was deleted during generation), `no_claims` (verification of a report without claims); `502 vlm_output_rejected` (the message names the reason, e.g. `unknown_alias`), `vlm_inference_error`; `503 vlm_unavailable` (not configured, failed or refused load; also development stubs when `APP_ENV=production`), `vlm_busy`; `504 vlm_timeout`; `500 report_save_failed`. 404/409 checks happen before the model is loaded. `DELETE …/images/{id}` also returns `409 image_in_use` when a stored claim cites the image.
+
 ## Errors
 
 All non-2xx responses (except the `/health/db` 503 body above) use:

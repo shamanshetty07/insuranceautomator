@@ -23,21 +23,20 @@ def test_valid_formats(fmt, media, ext):
     result = process_image(make_image_bytes(fmt, (64, 32)), LIMITS)
     assert (result.media_type, result.extension) == (media, ext)
     assert (result.width_px, result.height_px) == (64, 32)
-    assert result.exif_orientation is None  # missing EXIF is fine
+    assert result.exif_orientation is None
     decoded = Image.open(io.BytesIO(result.data))
     assert decoded.format == fmt and decoded.size == (64, 32)
 
 
 def test_exif_rotation_is_applied_to_pixels_and_dimensions():
-    raw = make_image_bytes("JPEG", (64, 32), orientation=6)  # 90 degrees clockwise to display
-    assert Image.open(io.BytesIO(raw)).size == (64, 32)  # stored sideways
+    raw = make_image_bytes("JPEG", (64, 32), orientation=6)
+    assert Image.open(io.BytesIO(raw)).size == (64, 32)
     result = process_image(raw, LIMITS)
-    assert (result.width_px, result.height_px) == (32, 64)  # dimensions of the normalized image
-    assert result.exif_orientation == 6  # original value kept as metadata only
+    assert (result.width_px, result.height_px) == (32, 64)
+    assert result.exif_orientation == 6
     stored = Image.open(io.BytesIO(result.data))
     assert stored.size == (32, 64)
-    assert stored.getexif().get(0x0112) in (None, 1)  # not rotated a second time by readers
-    # The blue marker started top-left; a 90-degree clockwise turn moves it to top-right.
+    assert stored.getexif().get(0x0112) in (None, 1)
     assert stored.convert("RGB").getpixel((stored.width - 2, 2))[2] > 150
 
 
@@ -76,7 +75,7 @@ def test_corrupt_image_truncated():
 
 
 def test_corrupt_png_header_only_decode_failure_is_clean():
-    err = _reject(png_header_only(64, 64))  # valid header, no pixel data
+    err = _reject(png_header_only(64, 64))
     assert err.code == "invalid_image"
 
 
@@ -86,7 +85,7 @@ def test_too_small():
 
 
 def test_too_many_pixels_rejected_from_header_without_decoding():
-    err = _reject(png_header_only(5000, 5000))  # 25M px > 1M limit; no pixel data exists
+    err = _reject(png_header_only(5000, 5000))
     assert (err.status_code, err.code) == (422, "invalid_dimensions")
 
 

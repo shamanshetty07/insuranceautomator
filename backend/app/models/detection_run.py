@@ -20,12 +20,7 @@ if TYPE_CHECKING:
 
 
 class DetectionRun(Base):
-    """One execution of one detection model/configuration on one image.
-
-    Canonical home of the model identity and parameters for its predictions; a
-    run may produce zero predictions (a valid "nothing detected" result).
-    `config` is validated on write by app.schemas.runs.DetectionConfig.
-    """
+    """One execution of one detection model/configuration on one image."""
 
     __tablename__ = "detection_runs"
     __table_args__ = (
@@ -42,7 +37,6 @@ class DetectionRun(Base):
     config: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
-    # Lowercase hex SHA-256 of the weights file, when known.
     weights_sha256: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[RunStatus] = mapped_column(
         run_status_type("detection_run_status"),
@@ -53,8 +47,6 @@ class DetectionRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Last sign of life from the worker holding a `running` run (refreshed periodically);
-    # stale-run recovery uses it, falling back to created_at when NULL (older rows).
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     inspection_image: Mapped["InspectionImage"] = relationship(back_populates="detection_runs")

@@ -1,29 +1,4 @@
-"""claim-level verification: verdict, claim type/id, review flag, policy reason codes
-
-Revision ID: 0004
-Revises: 0003
-Create Date: 2026-10-29
-
-verification_label becomes nullable (NULL = verifier produced nothing/invalid output).
-New columns are all nullable or defaulted, so existing rows stay valid. Legacy rows are
-backfilled with a verdict derived from the old label (mirrors
-app.services.verdict_mapping.legacy_verdict; a test keeps the two in agreement):
-
-    supported            -> supported
-    contradicted         -> contradicted
-    wrong_location       -> contradicted         (stated location conflicts with evidence)
-    wrong_damage_type    -> contradicted         (stated damage type conflicts with evidence)
-    unverifiable         -> insufficient_evidence
-    unsupported_severity -> NULL (ambiguous: overstated vs. merely not established; not guessed)
-    omitted_damage       -> NULL (a coverage finding, not a verdict about a report claim)
-
-Legacy rows keep claim_id/claim_type NULL, needs_human_review false, policy_reason_codes [].
-needs_human_review is NOT set for ambiguous legacy rows; it is routing for the new pipeline.
-
-Downgrade is lossy: the new columns are dropped (new-pipeline data is lost), and rows with a
-NULL verification_label are given 'unverifiable' before NOT NULL is restored. That invented
-label is the only way to keep those rows.
-"""
+"""claim-level verification: verdict, claim type/id, review flag, policy reason codes"""
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -38,7 +13,7 @@ depends_on: Union[str, Sequence[str], None] = None
 TABLE = "verification_results"
 
 
-# Frozen on purpose: a migration must not change when the Python enums later gain members.
+# Frozen on purpose: must not change when the Python enum gains members.
 CLAIM_TYPES = (
     "visible_damage_presence",
     "damage_type",
@@ -75,7 +50,6 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    # Same names SQLAlchemy's Enum(create_constraint=True, name=...) gives in the model.
     op.create_check_constraint("claim_type", TABLE, _in_list("claim_type", CLAIM_TYPES))
     op.create_check_constraint("verdict", TABLE, _in_list("verdict", VERDICTS))
 
@@ -116,11 +90,10 @@ def downgrade() -> None:
     op.drop_index("ix_verification_results_review", table_name=TABLE)
     op.drop_index("uq_verification_results_run_claim", table_name=TABLE)
     op.drop_constraint("ck_verification_results_omitted_has_no_verdict", TABLE, type_="check")
-    # Lossy: a NULL label cannot be represented once NOT NULL is restored.
     op.execute("UPDATE verification_results SET verification_label = 'unverifiable' WHERE verification_label IS NULL")
     op.alter_column(TABLE, "verification_label", existing_type=sa.String(32), nullable=False)
     op.drop_column(TABLE, "policy_reason_codes")
     op.drop_column(TABLE, "needs_human_review")
-    op.drop_column(TABLE, "verdict")  # also drops its CHECK
-    op.drop_column(TABLE, "claim_type")  # also drops its CHECK
+    op.drop_column(TABLE, "verdict")
+    op.drop_column(TABLE, "claim_type")
     op.drop_column(TABLE, "claim_id")

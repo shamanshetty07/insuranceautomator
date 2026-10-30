@@ -1,10 +1,4 @@
-"""QA gap tests for image normalization (no database needed).
-
-Covers inputs the Phase 2 tests do not: non-RGB modes, multi-frame files, EXIF on
-PNG/WebP, header-declared JPEG sizes, the inclusive pixel limit, and metadata
-carried outside EXIF. The JPEG-comment and MPO tests were strict xfails until the
-lead fixed those defects.
-"""
+"""QA gap tests for image normalization (no database needed)."""
 
 import io
 import struct
@@ -31,14 +25,13 @@ def _save(image: Image.Image, fmt: str, **kwargs) -> bytes:
      ("RGBA", "WEBP"), ("CMYK", "JPEG"), ("L", "JPEG")],
 )
 def test_non_rgb_modes_are_accepted_and_stored_decodable(mode, fmt):
-    # Detection (Phase 3) reads these stored files, so every accepted mode must decode.
     result = process_image(_save(Image.new(mode, (64, 48)), fmt), LIMITS)
     stored = Image.open(io.BytesIO(result.data))
     stored.load()
     assert stored.format == fmt and stored.size == (64, 48)
     assert (result.width_px, result.height_px) == (64, 48)
     if fmt == "JPEG":
-        assert stored.mode in ("RGB", "L")  # CMYK is converted for JPEG output
+        assert stored.mode in ("RGB", "L")
 
 
 @pytest.mark.parametrize("fmt", ["PNG", "WEBP"])
@@ -69,7 +62,7 @@ def test_pixel_limit_is_inclusive():
 
 def _jpeg_with_declared_size(width: int, height: int) -> bytes:
     raw = bytearray(make_image_bytes("JPEG", (64, 32)))
-    sof = raw.index(b"\xff\xc0")  # baseline SOF0: marker, length(2), precision(1), height(2), width(2)
+    sof = raw.index(b"\xff\xc0")
     raw[sof + 5 : sof + 9] = struct.pack(">HH", height, width)
     return bytes(raw)
 
@@ -80,7 +73,7 @@ def test_oversized_jpeg_header_is_rejected_without_decoding(monkeypatch):
 
     monkeypatch.setattr(ImageFile.ImageFile, "load", no_decode)
     with pytest.raises(AppError) as exc:
-        process_image(_jpeg_with_declared_size(2000, 2000), LIMITS)  # 4M px > 1M limit
+        process_image(_jpeg_with_declared_size(2000, 2000), LIMITS)
     assert exc.value.code == "invalid_dimensions"
 
 

@@ -34,7 +34,7 @@ function StoredImage({ image, onDeleted }: { image: InspectionImage; onDeleted: 
         className="relative overflow-hidden rounded bg-slate-100"
         style={hasSize ? { aspectRatio: `${image.width_px} / ${image.height_px}` } : undefined}
       >
-        {/* The stored image is already orientation-normalized: no CSS rotation is applied. */}
+        {/* Already EXIF-normalized: never rotate with CSS. */}
         <img
           src={apiUrl(image.content_url)}
           alt={`Photo ${image.image_order + 1}: ${image.original_filename}`}

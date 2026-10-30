@@ -32,7 +32,6 @@ const makeRun = (over: Partial<DetectionRun> = {}): DetectionRun => ({
   predictions: [], ...over,
 });
 
-/** Routes mocked fetch calls by method + path; `detections` is what GET returns (mutable). */
 function mockApi(opts: {
   detector?: DetectorStatus;
   images?: InspectionImage[];
@@ -111,7 +110,7 @@ describe("DetectionSection", () => {
     expect(within(list).getByText("scratch")).toBeInTheDocument();
     expect(screen.getByText(/420 ms/)).toBeInTheDocument();
     const boxes = screen.getAllByTestId("detection-box");
-    expect(boxes).toHaveLength(1); // the box-less prediction is listed but not drawn
+    expect(boxes).toHaveLength(1);
     expect(boxes[0]).toHaveStyle({ left: "10%", top: "20%", width: "40%", height: "40%" });
   });
 

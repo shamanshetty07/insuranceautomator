@@ -27,7 +27,7 @@ export function ImageUploader({ inspectionId, storedCount, onUploaded }: Props) 
   const [messages, setMessages] = useState<string[]>([]);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const inFlight = useRef(false); // guards against double submits before state updates land
+  const inFlight = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const stagedRef = useRef(staged);
   stagedRef.current = staged;
@@ -67,7 +67,7 @@ export function ImageUploader({ inspectionId, storedCount, onUploaded }: Props) 
 
   function onPick(e: ChangeEvent<HTMLInputElement>) {
     addFiles(Array.from(e.target.files ?? []));
-    e.target.value = ""; // allow choosing the same file again after removal
+    e.target.value = "";
   }
 
   function remove(key: string) {

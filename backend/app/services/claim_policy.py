@@ -1,66 +1,4 @@
-"""Pure, deterministic claim-verdict policy.
-
-Combines a verifier's opinion with evidence integrity, evidence association and
-the detector's agreement signal into exactly one decision per claim. No DB,
-files, network, model calls or logging; no mutable module state.
-
-Design notes
-- A Verdict never encodes review; ``needs_human_review`` is a separate flag.
-- Detector confidence is deliberately NOT an input: it is a model score, not the
-  probability a claim is true, so it must never raise a verdict.
-- A missing detection (NO_DETECTION) is not evidence of absence: it can never
-  yield CONTRADICTED.
-- The policy never drops a claim: every input yields exactly one decision.
-
-Rule precedence (first matching rule wins):
-  1. claim type unknown/invalid          -> insufficient_evidence, review
-  2. HIDDEN_STRUCTURAL_DAMAGE            -> insufficient_evidence, review (always)
-  3. REPAIR_COST without validated cost source or human confirmation
-                                         -> insufficient_evidence, review
-  4. DAMAGE_CAUSE without human confirmation
-                                         -> insufficient_evidence, review
-  5. DAMAGE_SEVERITY without validated severity policy
-                                         -> insufficient_evidence, review
-  6. REPAIR_RECOMMENDATION / OTHER without human confirmation
-                                         -> insufficient_evidence, review
-  7. association != ASSOCIATED (none cited / unresolved)
-                                         -> insufficient_evidence, review
-     (checked before integrity: with nothing cited, integrity is necessarily
-     unchecked, and "no evidence cited" is the real reason)
-  8. integrity != OK (missing/mismatched/corrupt/unchecked)
-                                         -> insufficient_evidence, review
-  9. verifier produced nothing / errored / invalid
-                                         -> insufficient_evidence, review
- 10. verifier SUPPORTED + detection CONFLICTS_WITH_CLAIM
-                                         -> insufficient_evidence, review
- 11. verifier CONTRADICTED + detection MATCHES_CLAIM
-                                         -> insufficient_evidence, review
- 12. verifier CONTRADICTED + detection NO_DETECTION
-                                         -> insufficient_evidence, review
-                                            (absence of a detection is not evidence)
- 13. verifier SUPPORTED + detection NO_DETECTION
-                                         -> supported, review (verifier alone)
- 14. verifier SUPPORTED / CONTRADICTED + detection not corroborating
-     (INCONCLUSIVE, UNAVAILABLE, or NOT_APPLICABLE on a visual claim)
-                                         -> the verifier's verdict, review (verifier alone)
- 15. verifier SUPPORTED (MATCHES; NOT_APPLICABLE on a non-visual claim)
-                                         -> supported, no review
- 16. verifier CONTRADICTED + detection CONFLICTS_WITH_CLAIM
-                                         -> contradicted, review (conflict not independent)
-     verifier CONTRADICTED (NOT_APPLICABLE on a non-visual claim)
-                                         -> contradicted, no review
- 17. verifier INSUFFICIENT_EVIDENCE      -> insufficient_evidence, review (any detection)
-
-Rule 14 means a visual claim never gets less scrutiny because detection is missing:
-an image never analysed, with only a failed run, or whose detections could not be
-compared with the claim is reviewed, like an image with zero detections (rule 13).
-A detection match is only consistency of cited evidence, never proof (see
-evidence_association), so it can only withhold review, never create a verdict.
-Rule 16: a conflict is derived from generator-written fields (the claim's damage_type
-wording, its chosen crops), so it is not independent evidence; an off-vocabulary word
-("shattered glass" vs the class "glass shatter") would otherwise finalise a
-contradiction. A visual claim is therefore never contradicted without review.
-"""
+"""Pure, deterministic claim-verdict policy."""
 
 import enum
 from dataclasses import dataclass
@@ -69,26 +7,26 @@ from app.schemas.claims import ClaimType, Verdict
 
 
 class EvidenceIntegrity(str, enum.Enum):
-    UNCHECKED = "unchecked"  # never counts as OK
+    UNCHECKED = "unchecked"
     OK = "ok"
     MISSING = "missing"
-    MISMATCHED = "mismatched"  # hash / dimensions / ownership
+    MISMATCHED = "mismatched"
     CORRUPT = "corrupt"
 
 
 class EvidenceAssociation(str, enum.Enum):
     ASSOCIATED = "associated"
     NONE_CITED = "none_cited"
-    UNRESOLVED = "unresolved"  # cited ids unknown or not in this inspection
+    UNRESOLVED = "unresolved"
 
 
 class DetectionMatch(str, enum.Enum):
-    MATCHES_CLAIM = "matches_claim"  # every cited detection agrees with the claim's attributes
-    NO_DETECTION = "no_detection"  # every cited image was analysed and nothing was detected
-    CONFLICTS_WITH_CLAIM = "conflicts_with_claim"  # every cited detection disagrees with the claim
-    INCONCLUSIVE = "inconclusive"  # detections exist but cannot be compared with the claim
-    UNAVAILABLE = "unavailable"  # a cited image has no completed detection run
-    NOT_APPLICABLE = "not_applicable"  # detection is irrelevant (non-visual claim / bad evidence)
+    MATCHES_CLAIM = "matches_claim"
+    NO_DETECTION = "no_detection"
+    CONFLICTS_WITH_CLAIM = "conflicts_with_claim"
+    INCONCLUSIVE = "inconclusive"
+    UNAVAILABLE = "unavailable"
+    NOT_APPLICABLE = "not_applicable"
 
 
 class ReasonCode(str, enum.Enum):
@@ -116,6 +54,7 @@ class ReasonCode(str, enum.Enum):
     VERIFIER_SUPPORTED = "verifier_supported"
     VERIFIER_CONTRADICTED = "verifier_contradicted"
     DETECTION_CONFLICT_UNCONFIRMED = "detection_conflict_unconfirmed"
+    VERIFIER_NOT_INDEPENDENT = "verifier_not_independent"
     VERIFIER_INSUFFICIENT = "verifier_insufficient"
 
 
@@ -137,6 +76,7 @@ class ClaimPolicyInput:
     has_validated_cost_source: bool = False
     has_validated_severity_policy: bool = False
     human_confirmed: bool = False
+    verifier_independent: bool = True
 
 
 @dataclass(frozen=True)
@@ -147,11 +87,7 @@ class ClaimPolicyDecision:
     explanation: str
 
 
-# Recorded on every VerificationRun; bump when a rule or reason code changes behavior.
-# 2: detection that cannot corroborate a visual claim (inconclusive/unavailable) -> review.
-# 3: verifier INSUFFICIENT_EVIDENCE -> review (was no review).
-# 4: verifier CONTRADICTED + detection CONFLICTS_WITH_CLAIM -> review (was no review).
-POLICY_VERSION = "claim-policy-4"
+POLICY_VERSION = "claim-policy-5"
 
 _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}
@@ -187,7 +123,7 @@ def _uncorroborated_reason(ctype: ClaimType, det: DetectionMatch) -> ReasonCode 
     if det is DetectionMatch.INCONCLUSIVE:
         return ReasonCode.DETECTION_INCONCLUSIVE
     if det is DetectionMatch.NOT_APPLICABLE and ctype in _VISUAL_TYPES:
-        return ReasonCode.DETECTION_INCONCLUSIVE  # a visual claim always has a detection question
+        return ReasonCode.DETECTION_INCONCLUSIVE
     return None
 
 
@@ -224,7 +160,6 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
             "This claim type cannot be decided from photos; needs human confirmation.",
         )
 
-    # 7: evidence association.
     if inp.association is EvidenceAssociation.NONE_CITED:
         return _insufficient(ReasonCode.NO_EVIDENCE_CITED, "No evidence was cited for this claim.")
     if inp.association is not EvidenceAssociation.ASSOCIATED:
@@ -232,12 +167,10 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
             ReasonCode.EVIDENCE_UNRESOLVED, "Cited evidence does not belong to this inspection."
         )
 
-    # 8: evidence integrity.
     if inp.integrity is not EvidenceIntegrity.OK:
         reason = _INTEGRITY_REASON.get(inp.integrity, ReasonCode.INTEGRITY_UNCHECKED)
         return _insufficient(reason, "Evidence integrity is not verified OK.")
 
-    # 9: verifier output.
     v_raw = inp.verifier.verdict
     verdict = _coerce_enum(Verdict, v_raw)
     if inp.verifier.errored:
@@ -268,6 +201,13 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
                 True,
                 (uncorroborated,),
                 "Supported by the verifier alone; detection could not be compared with the claim.",
+            )
+        if not inp.verifier_independent:
+            return ClaimPolicyDecision(
+                Verdict.SUPPORTED,
+                True,
+                (ReasonCode.VERIFIER_NOT_INDEPENDENT,),
+                "Supported, but by the same model that wrote the claim; a human confirms it.",
             )
         return ClaimPolicyDecision(
             Verdict.SUPPORTED, False, (ReasonCode.VERIFIER_SUPPORTED,), "Verifier supports the claim."

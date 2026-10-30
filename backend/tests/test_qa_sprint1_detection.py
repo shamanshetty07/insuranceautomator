@@ -1,8 +1,4 @@
-"""Sprint 1 (Agent C): stuck-run handling, runtime versions on runs, opt-in safe load.
-
-Mostly DB-less (fake session/detector). Tests marked requires_db exercise the real
-conditional UPDATE and are skipped without TEST_DATABASE_URL.
-"""
+"""Sprint 1 (Agent C): stuck-run handling, runtime versions on runs, opt-in safe load."""
 
 import contextlib
 import importlib.metadata
@@ -34,19 +30,16 @@ NO_DB = "postgresql+psycopg://none:none@127.0.0.1:1/none"
 CONFIG = DetectionConfig(confidence_threshold=0.25, iou_threshold=0.45, image_size=640, max_detections=100)
 
 
-# --- fakes ---------------------------------------------------------------------
-
-
 class FakeSession:
     def __init__(self, fail_commits_after: int | None = None):
         self.added: list[object] = []
         self.commits = 0
         self.rollbacks = 0
         self.executed: list[object] = []
-        self.fail_commits_after = fail_commits_after  # commit number (1-based) from which commits fail
+        self.fail_commits_after = fail_commits_after
         self.state_at_commit: list[tuple[str, object]] = []
         self.refreshed: list[tuple[object, bool]] = []
-        self.on_refresh = None  # simulate another transaction changing the row before the lock
+        self.on_refresh = None
 
     def add(self, obj):
         self.added.append(obj)
@@ -107,9 +100,6 @@ def _run_one(db, storage, tgt, behaviour, heartbeat=_no_heartbeat):
     return svc._run_one(db, storage, FakeDetector(behaviour), tgt, heartbeat)
 
 
-# --- Task A --------------------------------------------------------------------
-
-
 def test_ordinary_exception_leaves_run_failed_with_safe_message(target):
     tgt, storage = target
     db = FakeSession()
@@ -125,13 +115,13 @@ def test_ordinary_exception_leaves_run_failed_with_safe_message(target):
 
 def test_failed_finish_commit_returns_none_and_does_not_raise(target):
     tgt, storage = target
-    db = FakeSession(fail_commits_after=2)  # create succeeds, every later commit fails
+    db = FakeSession(fail_commits_after=2)
 
     def boom(_):
         raise RuntimeError("x")
 
     assert _run_one(db, storage, tgt, boom) is None
-    assert db.rollbacks >= 1  # session left usable
+    assert db.rollbacks >= 1
 
 
 @pytest.mark.parametrize("exc", [KeyboardInterrupt, SystemExit, GeneratorExit])
@@ -144,10 +134,10 @@ def test_base_exception_marks_run_failed_atomically_and_reraises(target, exc):
 
     with pytest.raises(exc):
         _run_one(db, storage, tgt, interrupted)
-    assert db.rollbacks == 1 and db.commits == 2  # create + interrupted-marker
+    assert db.rollbacks == 1 and db.commits == 2
     sql = str(db.executed[0].compile()).lower()
     assert sql.startswith("update detection_runs")
-    assert "detection_runs.status" in sql and "where" in sql  # conditional on still running
+    assert "detection_runs.status" in sql and "where" in sql
 
 
 def test_base_exception_marker_failure_does_not_mask_original(target):
@@ -219,7 +209,7 @@ def test_fail_stale_runs_only_touches_old_running_runs(db_session):
     assert old.completed_at is not None
     assert young.status is RunStatus.RUNNING and young.completed_at is None
     assert done.status is RunStatus.COMPLETED
-    assert svc.fail_stale_runs(db_session, timedelta(minutes=30)) == 0  # idempotent
+    assert svc.fail_stale_runs(db_session, timedelta(minutes=30)) == 0
 
 
 @requires_db
@@ -231,9 +221,6 @@ def test_interrupted_marker_does_not_clobber_a_finished_run(db_session):
     svc._fail_if_running(db_session, finished.id)
     db_session.expire_all()
     assert finished.status is RunStatus.COMPLETED and finished.error_message is None
-
-
-# --- Task B --------------------------------------------------------------------
 
 
 def _patch_versions(monkeypatch, mapping):
@@ -297,10 +284,7 @@ def test_old_runs_without_runtime_still_serialise_and_new_ones_expose_it():
     new = _read({**CONFIG.model_dump(mode="json"), "runtime": {"ultralytics": "8", "torch": None}})
     assert new.config.runtime.ultralytics == "8" and new.config.runtime.torch is None
     with pytest.raises(ValidationError):
-        _read({**CONFIG.model_dump(mode="json"), "runtime": {"python": "3.14"}})  # only package names
-
-
-# --- Task C --------------------------------------------------------------------
+        _read({**CONFIG.model_dump(mode="json"), "runtime": {"python": "3.14"}})
 
 
 def test_safe_load_is_off_by_default_and_leaves_env_alone(monkeypatch):

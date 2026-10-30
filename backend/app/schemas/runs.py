@@ -1,9 +1,6 @@
-"""Validated shapes for the JSONB `config` / `generation_config` columns.
+"""Validated shapes for the JSONB `config` / `generation_config` columns."""
 
-Validate with these before writing; the database stores JSON as given. Model name
-and version are NOT repeated here (they have dedicated columns), and neither are the
-prediction IDs used by a report (see the report_predictions table).
-"""
+import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -12,10 +9,6 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# Standard YOLO detection models downsample by 32; Ultralytics silently rounds any
-# other inference size up (and the recorded size would then be wrong), so it is
-# rejected instead. A model with a larger stride (e.g. a P6 model, 64) is checked
-# against its own stride when it loads (ultralytics_detector).
 IMAGE_SIZE_STRIDE = 32
 
 
@@ -45,23 +38,14 @@ class DetectionConfig(_DetectionParams):
 
 
 class RuntimeVersions(_Strict):
-    """Installed package versions recorded on a run (name -> version; None if unknown).
-
-    Written only by the server (detection_service); never part of DetectionConfig, so a
-    client-supplied DetectionConfig cannot carry or forge it.
-    """
+    """Installed package versions recorded on a run (name -> version; None if unknown)."""
 
     ultralytics: str | None = None
     torch: str | None = None
 
 
 class StoredDetectionConfig(_DetectionParams):
-    """What a DetectionRun stores: the inference parameters plus server-recorded runtime.
-
-    `runtime` is optional so rows written before it existed still validate. Likewise
-    image_size only has to be positive here: a historical run recorded with a size
-    that is not a multiple of 32 stays readable. New runs get DetectionConfig's check.
-    """
+    """What a DetectionRun stores: the inference parameters plus server-recorded runtime."""
 
     runtime: RuntimeVersions | None = None
 
@@ -76,8 +60,8 @@ class SamplingParams(_Strict):
 class EvidenceSettings(_Strict):
     """Per-strategy settings; keys that do not apply to the strategy stay unset."""
 
-    crop_padding: float | None = Field(default=None, ge=0, le=1)  # cropped_region: fraction of box size
-    mask_opacity: float | None = Field(default=None, ge=0, le=1)  # image_with_segmentation_mask
+    crop_padding: float | None = Field(default=None, ge=0, le=1)
+    mask_opacity: float | None = Field(default=None, ge=0, le=1)
 
 
 class GenerationConfig(_Strict):
@@ -89,4 +73,45 @@ class GenerationConfig(_Strict):
 class VerificationConfig(_Strict):
     prompt_version: str = Field(min_length=1)
     sampling: SamplingParams
-    policy_version: str | None = None  # claim_policy.POLICY_VERSION; set by the verification service
+    policy_version: str | None = None
+
+
+class ModelRecord(_Strict):
+    """What exactly ran: weights digest and installed package versions."""
+
+    weights_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    packages: dict[str, str | None] = Field(default_factory=dict)
+
+
+class VlmLimitsRecord(_Strict):
+    """Limits that shape what the model saw or could answer (VLM_* settings)."""
+
+    timeout_seconds: float | None = None
+    max_new_tokens: int | None = None
+    max_images: int | None = None
+    max_image_pixels: int | None = None
+    max_detections: int | None = None
+    max_claims: int | None = None
+
+
+class EvidenceInputs(_Strict):
+    """The evidence handed to the generator, in prompt order."""
+
+    image_ids: tuple[uuid.UUID, ...] = ()
+    detection_run_ids: tuple[uuid.UUID, ...] = ()
+
+
+class StoredGenerationConfig(GenerationConfig):
+    """generated_reports.generation_config as written by the report service."""
+
+    model: ModelRecord | None = None
+    limits: VlmLimitsRecord | None = None
+    evidence: EvidenceInputs | None = None
+
+
+class StoredVerificationConfig(VerificationConfig):
+    """verification_runs.config as written by the verification service."""
+
+    model: ModelRecord | None = None
+    limits: VlmLimitsRecord | None = None
+    verifier_independent: bool | None = None

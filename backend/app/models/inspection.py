@@ -14,10 +14,7 @@ if TYPE_CHECKING:
 
 
 class InspectionStatus(str, enum.Enum):
-    """Lifecycle labels. See docs/architecture.md for meanings.
-
-    Phase 1 only ever assigns CREATED; no transitions are implemented.
-    """
+    """Lifecycle labels. See docs/architecture.md for meanings."""
 
     CREATED = "created"
     IMAGES_PENDING = "images_pending"

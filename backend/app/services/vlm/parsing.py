@@ -1,11 +1,4 @@
-"""Parse and validate raw VLM output. Fails closed: any problem rejects the whole output.
-
-Model output is an untrusted prediction. The generator's claims are produced together,
-so an invented alias, a duplicate reference or too many claims means the output as a
-whole cannot be trusted: nothing is dropped, truncated or repaired, and no retry is
-made (decoding is greedy, so a retry would repeat it). Valid claims become the existing
-ExtractedClaim / StructuredReport contracts, reusing their validators.
-"""
+"""Parse and validate raw VLM output. Fails closed: any problem rejects the whole output."""
 
 import json
 import re
@@ -26,7 +19,6 @@ from app.services.vlm.prompts import AliasMap
 
 MAX_OUTPUT_CHARS = 64_000
 MAX_EXPLANATION_CHARS = 2000
-# Attributed to the model on purpose: it is not a finding that the vehicle is undamaged.
 NO_CLAIMS_TEXT = "The model described no visible damage in the provided images."
 _FENCE = re.compile(r"\A```(?:json)?\s*\n(.*)\n?```\Z", re.DOTALL | re.IGNORECASE)
 
@@ -127,17 +119,11 @@ def _resolve(aliases: AliasMap, raw: _RawClaim, claim_id: str) -> ExtractedClaim
             evidence=evidence,
         )
     except ValidationError:
-        # Unknown claim type, duplicate ids/evidence, uncovered evidence, bad lengths, ...
         raise VlmOutputError("A claim in the model output is invalid.", code="invalid_claim") from None
 
 
 def parse_structured_report(raw: str, aliases: AliasMap, max_claims: int) -> StructuredReport:
-    """Model text -> StructuredReport whose report text is exactly its claims, in order.
-
-    Building the report from the claims means every sentence in it is a structured,
-    verifiable claim: there is no unverified free prose. Zero claims is a valid answer
-    ("no damage seen"); it is NOT evidence that the vehicle is undamaged.
-    """
+    """Model text -> StructuredReport whose report text is exactly its claims, in order."""
     data = load_json_object(raw)
     try:
         report = _RawReport.model_validate(data)
@@ -151,8 +137,7 @@ def parse_structured_report(raw: str, aliases: AliasMap, max_claims: int) -> Str
 
 
 def parse_verdict(raw: str) -> tuple[str, str]:
-    """Model text -> (label, explanation). The label is passed through unvalidated on purpose:
-    verification_service decides what an unknown or non-claim label (omitted_damage) means."""
+    """Model text -> (label, explanation)."""
     data = load_json_object(raw)
     try:
         verdict = _RawVerdict.model_validate(data)

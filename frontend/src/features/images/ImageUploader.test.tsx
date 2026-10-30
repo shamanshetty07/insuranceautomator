@@ -37,7 +37,6 @@ describe("ImageUploader", () => {
 
   it("rejects wrong types and oversized files with clear messages", async () => {
     const { input } = setup();
-    // applyAccept off: the input's accept attribute would otherwise filter before our validation
     const user = userEvent.setup({ applyAccept: false });
     const gif = new File(["x"], "a.gif", { type: "image/gif" });
     const big = png("big.png", IMAGE_LIMITS.maxBytes + 1);

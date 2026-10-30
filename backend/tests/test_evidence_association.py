@@ -109,7 +109,7 @@ def test_image_from_other_inspection_same_as_unknown(world):
     r = one(world, claim(images=[own.id, foreign.id]))
     assert r.association is A.UNRESOLVED
     assert r.problems == (f"image_not_in_inspection:{foreign.id}",)
-    assert [i for i, _ in r.image_paths] == [own.id]  # resolved provenance kept
+    assert [i for i, _ in r.image_paths] == [own.id]
     assert r.integrity is I.OK
 
 
@@ -149,7 +149,6 @@ def test_evidence_ref_prediction_on_other_image(world):
     a = add_image(db, storage, insp, 0)
     b = add_image(db, storage, insp, 1)
     _, (p,) = add_run(db, b, preds=1)
-    # claim-level lists are consistent; only the reference pairs p with the wrong image
     ref = EvidenceReference(image_id=a.id, prediction_id=p.id)
     r = one(world, claim(images=[a.id, b.id], preds=[p.id], evidence=[ref]))
     assert r.association is A.UNRESOLVED
@@ -238,12 +237,10 @@ def test_detection_no_detection_unavailable_and_inconclusive(world):
     has = add_image(db, storage, insp, 4)
     add_run(db, has, preds=1)
     assert one(world, claim(images=[zero.id])).detection_match is D.NO_DETECTION
-    # no completed run: unavailable (reviewed), never "nothing detected" and never skipped
     assert one(world, claim(images=[never.id])).detection_match is D.UNAVAILABLE
     assert one(world, claim(images=[failed.id])).detection_match is D.UNAVAILABLE
     assert one(world, claim(images=[running.id])).detection_match is D.UNAVAILABLE
     assert one(world, claim(images=[zero.id, never.id])).detection_match is D.UNAVAILABLE
-    # image has predictions the claim did not cite -> cannot tell
     r = one(world, claim(images=[has.id]))
     assert r.detection_match is D.INCONCLUSIVE and r.detection_details == (f"uncited_detections:{has.id}",)
 
@@ -291,7 +288,7 @@ def test_mixed_batch_order_and_readonly(world):
         claim("c7", ClaimType.DAMAGE_TYPE, images=[good.id]),
         claim("c8", ClaimType.REPAIR_COST, images=[good.id]),
     ]
-    db.commit()  # settle test setup so only association's own effects are visible
+    db.commit()
     res = associate_claims(db, storage, insp.id, claims)
     assert [r.claim_id for r in res] == [c.claim_id for c in claims]
     assert not db.new and not db.dirty and not db.deleted
@@ -320,7 +317,7 @@ FAR = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}
 def test_damage_type_compared_with_the_stored_prediction(world):
     db, storage, insp, _ = world
     img = add_image(db, storage, insp)
-    _, (p,) = add_run(db, img, preds=1)  # stored class "dent"
+    _, (p,) = add_run(db, img, preds=1)
 
     def typed(cid, damage_type):
         return ExtractedClaim(claim_id=cid, text=f"A {damage_type or 'damaged area'} is visible",

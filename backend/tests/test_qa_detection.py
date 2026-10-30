@@ -1,11 +1,4 @@
-"""QA pass 2: the detection boundary (threat model T-1..T-8) and the request body cap.
-
-Covers what Agent A's tests do not: the pixels the model actually receives for every
-stored image mode, weights-file types, inference/load serialization under threads,
-offline flags, error-message leakage, oversized class names, duplicate ids, stale
-`running` runs, concurrent detection requests and CORS on body-cap rejections.
-Defects found here (P2-I-1..3) are fixed; their tests are now regressions. No real model or ultralytics install is needed.
-"""
+"""QA pass 2: the detection boundary (threat model T-1..T-8) and the request body cap."""
 
 import io
 import sys
@@ -46,9 +39,6 @@ from tests.image_utils import make_image_bytes
 NO_DB = "postgresql+psycopg://none:none@127.0.0.1:1/none"
 CONFIG = DetectionConfig(confidence_threshold=0.25, iou_threshold=0.45, image_size=640, max_detections=100)
 BOX = {"x_min": 0.1, "y_min": 0.2, "x_max": 0.5, "y_max": 0.6}
-
-
-# --- fakes -------------------------------------------------------------------
 
 
 class CapturingYOLO:
@@ -129,9 +119,6 @@ def _encode(image: Image.Image, fmt: str = "PNG") -> bytes:
     return out.getvalue()
 
 
-# --- T-2: what the model actually sees ----------------------------------------
-
-
 @pytest.mark.parametrize("mode", ["RGBA", "LA", "P", "1", "L", "RGB"])
 def test_every_stored_mode_reaches_the_model_as_rgb_at_stored_size(tmp_path, capturing_yolo, mode):
     path = _stored_file(tmp_path, _encode(Image.new(mode, (64, 48))))
@@ -142,7 +129,6 @@ def test_every_stored_mode_reaches_the_model_as_rgb_at_stored_size(tmp_path, cap
 
 
 def test_exif_rotated_upload_reaches_the_model_upright(tmp_path, capturing_yolo):
-    # Boxes are relative to the stored (rotated) pixels, so the model must see those.
     path = _stored_file(tmp_path, make_image_bytes("JPEG", (64, 32), orientation=6))
     _detector(tmp_path).detect([ImageRef(image_id=uuid.uuid4(), path=path)])
     assert capturing_yolo.instances[0].sources[0].size == (32, 64)
@@ -150,15 +136,12 @@ def test_exif_rotated_upload_reaches_the_model_upright(tmp_path, capturing_yolo)
 
 def test_sixteen_bit_png_is_not_saturated_before_inference(tmp_path, capturing_yolo):
     image = Image.new("I;16", (64, 48))
-    image.putdata([32768] * (64 * 48))  # mid-grey in 16-bit (paste() with an int byte-replicates)
+    image.putdata([32768] * (64 * 48))
     path = _stored_file(tmp_path, _encode(image))
     assert Image.open(path).mode == "I;16"
     _detector(tmp_path).detect([ImageRef(image_id=uuid.uuid4(), path=path)])
     red, _, _ = capturing_yolo.instances[0].sources[0].getpixel((10, 10))
     assert 100 <= red <= 160
-
-
-# --- T-1: weights loading ----------------------------------------------------
 
 
 @pytest.mark.parametrize("name", ["model.yaml", "MODEL.YML"])
@@ -176,7 +159,6 @@ def test_import_forces_ultralytics_offline_and_no_autoinstall(monkeypatch):
     fake.YOLO = object
     monkeypatch.setitem(sys.modules, "ultralytics", fake)
     assert ultralytics_detector._import_yolo() is object
-    # ultralytics' env_bool accepts "1"/"true"; checked against ultralytics 8.4.191 source.
     assert ultralytics_detector.os.environ["YOLO_OFFLINE"] == "1"
     assert ultralytics_detector.os.environ["YOLO_AUTOINSTALL"] == "0"
 
@@ -192,9 +174,6 @@ def test_status_never_loads_or_hashes_weights(tmp_path, capturing_yolo, monkeypa
     assert str(tmp_path) not in status.model_dump_json()
 
 
-# --- T-3: serialization ------------------------------------------------------
-
-
 def test_concurrent_detect_calls_never_overlap_in_the_model(tmp_path, capturing_yolo):
     capturing_yolo.predict_delay = 0.03
     path = _stored_file(tmp_path, make_image_bytes())
@@ -205,7 +184,7 @@ def test_concurrent_detect_calls_never_overlap_in_the_model(tmp_path, capturing_
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         list(pool.map(run, range(6)))
-    assert capturing_yolo.max_active == 1  # one process-wide lock, even across detector instances
+    assert capturing_yolo.max_active == 1
 
 
 def test_concurrent_first_requests_load_the_model_once(tmp_path, capturing_yolo):
@@ -215,9 +194,6 @@ def test_concurrent_first_requests_load_the_model_once(tmp_path, capturing_yolo)
         detectors = list(pool.map(lambda _: provider.get(), range(5)))
     assert len(capturing_yolo.instances) == 1
     assert all(d is detectors[0] for d in detectors)
-
-
-# --- persistence and API (database) -------------------------------------------
 
 
 class FakeDetector:
@@ -280,7 +256,7 @@ def test_failure_details_never_reach_the_client(client, db_session):
 def test_unstorable_class_name_fails_only_that_run(client, db_session):
     def by_color(ref):
         bad = Image.open(ref.path).convert("RGB").getpixel((40, 20))[0] > 100
-        name = "x" * 101 if bad else "dent"  # damage_type is VARCHAR(100)
+        name = "x" * 101 if bad else "dent"
         return [Detection(image_id=ref.image_id, damage_type=name, confidence=0.9, bounding_box=BOX)]
 
     _install(by_color)
@@ -307,7 +283,6 @@ def test_stale_running_run_is_reported_truthfully(client, db_session):
     _install(lambda ref: [])
     iid, (image_id,) = _inspection_with_images(client, [(7, 7, 7)])
     assert client.post(f"/api/v1/inspections/{iid}/detections").status_code == 200
-    # A run left behind by a crashed worker: running, never completed.
     crashed = DetectionRun(
         inspection_image_id=uuid.UUID(image_id), model_name="qa-fake", model_version="1",
         config=CONFIG.model_dump(mode="json"), status=RunStatus.RUNNING,
@@ -346,16 +321,12 @@ def test_concurrent_detection_requests_are_independent_and_latest_is_determinist
     assert first == second and all(r["status"] == "completed" for r in first)
 
 
-# --- request body cap (lead's BodySizeLimitMiddleware) ------------------------
-
-
 def _allowed_origin() -> str:
     return next(m for m in app.user_middleware if m.cls is CORSMiddleware).kwargs["allow_origins"][0]
 
 
 @requires_db
 def test_body_cap_counts_framing_allowance_only_once(client, test_settings):
-    # Just over the cap is refused by the middleware before multipart parsing.
     iid = client.post("/api/v1/inspections", json={"title": "qa"}).json()["id"]
     r = client.post(
         f"/api/v1/inspections/{iid}/images",

@@ -16,7 +16,6 @@ class DetectorStatusRead(BaseModel):
     backend: Literal["none", "ultralytics"]
     model_name: str | None = None
     model_version: str | None = None
-    # weights_sha256 and classes are known only once the model has been loaded.
     weights_sha256: str | None = None
     classes: list[str] | None = None
     config: DetectionConfig | None = None
@@ -26,7 +25,6 @@ class DetectorStatusRead(BaseModel):
 class DetectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # None/omitted = every image of the inspection.
     image_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=100)
 
 
@@ -36,7 +34,6 @@ class PredictionRead(BaseModel):
     id: uuid.UUID
     damage_type: str
     confidence: float
-    # Normalized to the stored image: 0-1, origin top-left, y down.
     bounding_box: BoundingBox | None
 
 

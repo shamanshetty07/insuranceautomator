@@ -9,6 +9,7 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.services.detection import DetectorProvider, SettingsDetectorProvider
 from app.services.image_storage import ImageStorage
+from app.services.vlm.provider import SettingsVlmProvider
 
 DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
@@ -31,3 +32,10 @@ def get_detector_provider(settings: AppSettings) -> DetectorProvider:
 
 
 Detector = Annotated[DetectorProvider, Depends(get_detector_provider)]
+
+
+def get_vlm_provider(settings: AppSettings) -> SettingsVlmProvider:
+    return SettingsVlmProvider(settings)
+
+
+Vlm = Annotated[SettingsVlmProvider, Depends(get_vlm_provider)]

@@ -40,14 +40,11 @@ export interface InspectionImage {
   media_type: string;
   file_size_bytes: number;
   sha256: string | null;
-  /** Pixel size of the stored, EXIF-normalized image (the space bounding boxes refer to). */
   width_px: number | null;
   height_px: number | null;
-  /** Original EXIF orientation; metadata only, already applied to the stored pixels. */
   exif_orientation: number | null;
   image_order: number;
   created_at: string;
-  /** Path relative to the API base URL; use apiUrl() to build the full URL. */
   content_url: string;
 }
 
@@ -73,14 +70,11 @@ export interface DetectorStatus {
   model_name: string | null;
   model_version: string | null;
   weights_sha256: string | null;
-  /** Model class names, verbatim. */
   classes: string[] | null;
   config: DetectionConfig | null;
-  /** Human-readable explanation when available is false. */
   reason: string | null;
 }
 
-/** Normalized to [0,1] relative to the stored image; origin top-left, y down. */
 export interface BoundingBox {
   x_min: number;
   y_min: number;
@@ -109,10 +103,105 @@ export interface DetectionRun {
   created_at: string;
   completed_at: string | null;
   duration_ms: number | null;
-  /** Ordered by confidence, descending. */
   predictions: DamagePrediction[];
 }
 
 export interface DetectionRunList {
   items: DetectionRun[];
+}
+
+export type RunStatus = DetectionRunStatus;
+
+export interface VlmStatus {
+  available: boolean;
+  backend: string;
+  reason: string | null;
+  model_name: string | null;
+  model_version: string | null;
+  weights_sha256: string | null;
+}
+
+export type ClaimType =
+  | "visible_damage_presence"
+  | "damage_type"
+  | "damage_location"
+  | "damage_severity"
+  | "hidden_structural_damage"
+  | "repair_recommendation"
+  | "repair_cost"
+  | "damage_cause"
+  | "other";
+
+export type Verdict = "supported" | "contradicted" | "insufficient_evidence";
+
+export type VerificationLabel =
+  | "supported"
+  | "contradicted"
+  | "wrong_location"
+  | "wrong_damage_type"
+  | "unsupported_severity"
+  | "unverifiable"
+  | "omitted_damage";
+
+export type EvidenceStrategy = "full_image" | "cropped_region" | "image_with_segmentation_mask";
+
+export interface EvidenceReference {
+  image_id: string;
+  prediction_id: string | null;
+  crop: BoundingBox | null;
+  note: string | null;
+}
+
+export interface ClaimResult {
+  verdict: Verdict | null;
+  needs_human_review: boolean;
+  policy_reason_codes: string[];
+  verification_label: VerificationLabel | null;
+  explanation: string;
+}
+
+export interface ReportClaim {
+  id: string;
+  claim_id: string;
+  position: number;
+  text: string;
+  claim_type: ClaimType;
+  damage_type: string | null;
+  image_ids: string[];
+  prediction_ids: string[];
+  evidence: EvidenceReference[];
+  result: ClaimResult | null;
+}
+
+export interface VerificationRun {
+  id: string;
+  report_id: string;
+  verifier_model: string;
+  verifier_version: string;
+  status: RunStatus;
+  error_message: string | null;
+  policy_version: string | null;
+  created_at: string;
+  completed_at: string | null;
+  review_count: number;
+}
+
+export interface ReportSummary {
+  id: string;
+  inspection_id: string;
+  content: string;
+  model_name: string;
+  model_version: string;
+  evidence_strategy: EvidenceStrategy;
+  created_at: string;
+  claim_count: number;
+}
+
+export interface ReportDetail extends ReportSummary {
+  claims: ReportClaim[];
+  verification: VerificationRun | null;
+}
+
+export interface ReportList {
+  items: ReportSummary[];
 }

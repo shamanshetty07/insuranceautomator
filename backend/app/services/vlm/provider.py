@@ -1,9 +1,4 @@
-"""Builds the configured VLM adapters from Settings; one loaded model per process.
-
-Mirrors detection/provider.py. status() never loads a model. A failed load is not
-cached, so fixing the configuration takes effect on the next call. Development stubs
-are never returned: without a configured model the adapters are unavailable.
-"""
+"""Builds the configured VLM adapters from Settings; one loaded model per process."""
 
 import importlib.util
 import logging
@@ -27,7 +22,7 @@ class VlmStatus:
     reason: str | None = None
     model_name: str | None = None
     model_version: str | None = None
-    weights_sha256: str | None = None  # known only once loaded
+    weights_sha256: str | None = None
 
 
 RunnerFactory = Callable[[Settings], VlmRunner]

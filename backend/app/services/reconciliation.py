@@ -1,13 +1,4 @@
-"""Report-only comparison of the database and the managed storage directory.
-
-Detects (and never changes anything):
-- missing:           database rows whose file is absent or whose path is unsafe
-- orphaned:          managed files with no database row
-- checksum_mismatch: files whose SHA-256 differs from the stored checksum
-
-Run:  python -m app.services.reconciliation [--json]
-There is deliberately no delete option. Review the report, then act manually.
-"""
+"""Report-only comparison of the database and the managed storage directory."""
 
 import argparse
 import hashlib
@@ -62,7 +53,7 @@ def _scan_files(storage: ImageStorage, report: ReconciliationReport) -> set[str]
         return found
     for dirpath, dirnames, filenames in os.walk(storage.root, followlinks=False):
         current = Path(dirpath)
-        for name in list(dirnames):  # symlinked directories are listed, not entered
+        for name in list(dirnames):
             if (current / name).is_symlink():
                 report.skipped_symlinks.append((current / name).relative_to(storage.root).as_posix())
                 dirnames.remove(name)
@@ -88,7 +79,7 @@ def reconcile(db: Session, storage: ImageStorage) -> ReconciliationReport:
         report.checked_records += 1
         path = image.storage_path
         if not storage.is_valid_relative_path(path):
-            report.invalid_paths.append(path)  # never touched on disk
+            report.invalid_paths.append(path)
             continue
         known.add(path)
         if not storage.exists(path):

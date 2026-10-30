@@ -27,7 +27,7 @@ def at_0001(db_engine):
 
     reset("0001")
     yield db_engine
-    reset("head")  # leave the shared test schema as other tests expect
+    reset("head")
 
 
 def test_upgrade_refuses_to_guess_metadata_for_existing_rows(at_0001):
@@ -42,7 +42,7 @@ def test_upgrade_refuses_to_guess_metadata_for_existing_rows(at_0001):
         )
     with pytest.raises(RuntimeError, match="generated_reports"):
         command.upgrade(_cfg(), "0002")
-    with at_0001.connect() as conn:  # transactional DDL: nothing was half-applied
+    with at_0001.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0001"
 
 

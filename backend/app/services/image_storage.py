@@ -1,9 +1,4 @@
-"""Filesystem storage for normalized images, confined to a configured root.
-
-Paths stored in the database are relative ("<inspection_id>/<image_id>.<ext>") and
-are always re-validated here: they must match the generated pattern, must not pass
-through symlinks, and must resolve inside the storage root.
-"""
+"""Filesystem storage for normalized images, confined to a configured root."""
 
 import logging
 import os
@@ -40,7 +35,6 @@ class ImageStorage:
             raise StorageError("storage path does not match the managed pattern")
         directory = self.root / relative_path.split("/")[0]
         path = self.root / relative_path
-        # Reject symlinked directories/files so nothing can point outside the root.
         if directory.is_symlink() or path.is_symlink():
             raise StorageError("symlinks are not allowed in managed storage")
         if not path.resolve().is_relative_to(self.root):
@@ -61,7 +55,7 @@ class ImageStorage:
                 handle.flush()
                 os.fsync(handle.fileno())
         except BaseException:
-            path.unlink(missing_ok=True)  # do not leave a partial file behind
+            path.unlink(missing_ok=True)
             raise
 
     def read(self, relative_path: str) -> bytes:
@@ -78,6 +72,6 @@ class ImageStorage:
         path = self.resolve(relative_path)
         path.unlink(missing_ok=True)
         try:
-            path.parent.rmdir()  # only succeeds when empty
+            path.parent.rmdir()
         except OSError:
             pass

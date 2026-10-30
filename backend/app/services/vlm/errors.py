@@ -1,8 +1,4 @@
-"""Errors raised by the local vision-language model (VLM) adapters.
-
-Every message is client-safe (no paths, no model output, no image data); details go
-to the server log. `code` is a stable identifier for callers and tests.
-"""
+"""Errors raised by the local vision-language model (VLM) adapters."""
 
 
 class VlmError(RuntimeError):

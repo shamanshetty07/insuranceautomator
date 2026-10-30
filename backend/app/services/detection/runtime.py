@@ -1,9 +1,4 @@
-"""Installed package versions recorded on every DetectionRun (reproducibility).
-
-Read from package metadata only: ultralytics and torch are never imported here, so this
-is cheap and works without the optional `detection` extra. Only package-name -> version
-strings are recorded; nothing about the environment, paths or machine.
-"""
+"""Installed package versions recorded on every DetectionRun (reproducibility)."""
 
 import importlib.metadata
 import logging
@@ -18,7 +13,7 @@ def _version(package: str) -> str | None:
         return str(importlib.metadata.version(package))
     except importlib.metadata.PackageNotFoundError:
         return None
-    except Exception:  # a broken install must never fail a detection run
+    except Exception:
         logger.warning("Could not read the installed version of %s", package, exc_info=True)
         return None
 

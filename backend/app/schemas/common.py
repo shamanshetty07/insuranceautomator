@@ -23,5 +23,5 @@ class StatusResponse(BaseModel):
 
 
 class DbHealthResponse(BaseModel):
-    status: str  # "ok" | "unavailable"
-    database: str  # "reachable" | "unreachable"
+    status: str
+    database: str

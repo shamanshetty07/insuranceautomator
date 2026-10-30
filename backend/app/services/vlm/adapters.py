@@ -1,15 +1,4 @@
-"""Qwen-VL adapters for the existing service protocols (app.services.interfaces).
-
-- QwenStructuredReportGenerator: StructuredReportGenerationService (+ ReportGenerationService).
-  Sees the original images and the detector's output; returns claims citing them.
-- QwenClaimVerifier: ClaimVerificationService.verify. Sees ONE claim's text and that
-  claim's original images only, never the report or the detections, and refuses
-  evidence that carries detections (independence from the generator's inputs).
-
-Both share one runner (one model in memory). Neither knows about the database; the
-verification service and a future report service own persistence. Model output is an
-untrusted prediction: the claim policy decides what it means.
-"""
+"""Qwen-VL adapters for the existing service protocols (app.services.interfaces)."""
 
 import uuid
 from collections.abc import Sequence
@@ -17,7 +6,7 @@ from collections.abc import Sequence
 from PIL import Image
 
 from app.schemas.claims import MAX_CLAIMS_PER_REPORT, StructuredReport
-from app.schemas.runs import GenerationConfig, SamplingParams, VerificationConfig
+from app.schemas.runs import GenerationConfig, SamplingParams, VerificationConfig, VlmLimitsRecord
 from app.services.detection.ultralytics_detector import to_rgb
 from app.services.types import ClaimVerdict, EvidenceBundle, ImageRef, ModelInfo, ReportClaim
 from app.services.vlm import prompts
@@ -52,6 +41,16 @@ class VlmLimits:
         self.max_detections = max_detections
         self.max_claims = max_claims
 
+    def record(self) -> VlmLimitsRecord:
+        return VlmLimitsRecord(
+            timeout_seconds=self.timeout_seconds,
+            max_new_tokens=self.max_new_tokens,
+            max_images=self.max_images,
+            max_image_pixels=self.max_image_pixels,
+            max_detections=self.max_detections,
+            max_claims=self.max_claims,
+        )
+
 
 def load_image(ref: ImageRef, max_pixels: int) -> Image.Image:
     """Stored original -> RGB, downscaled (never upscaled) to at most max_pixels."""
@@ -83,6 +82,8 @@ class QwenStructuredReportGenerator:
         self._runner = runner
         self._limits = limits
         self.model: ModelInfo = runner.info
+        self.runtime = dict(runner.runtime)
+        self.limits_record = limits.record()
 
     @property
     def generation_config(self) -> GenerationConfig:
@@ -120,6 +121,8 @@ class QwenClaimVerifier:
         self._runner = runner
         self._limits = limits
         self.model: ModelInfo = runner.info
+        self.runtime = dict(runner.runtime)
+        self.limits_record = limits.record()
 
     @property
     def verification_config(self) -> VerificationConfig:
@@ -157,9 +160,7 @@ class QwenClaimVerifier:
         return verdicts
 
     def extract_claims(self, report_text: str) -> list[ReportClaim]:
-        # Claims come structured from the generator; splitting prose is not supported.
         raise NotImplementedError("claims are produced by the structured report generator")
 
     def find_omissions(self, report_text: str, evidence: EvidenceBundle) -> list[ClaimVerdict]:
-        # Not returning []: that would read as "nothing omitted".
         raise NotImplementedError("omission detection is not implemented")

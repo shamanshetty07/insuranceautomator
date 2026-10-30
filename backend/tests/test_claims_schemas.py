@@ -191,9 +191,6 @@ def test_crop_rejects_unknown_keys():
         EvidenceReference(image_id=uuid.uuid4(), crop={**box, "extra": 1})
 
 
-# --- immutability and duplicate evidence (hardening) ------------------------------------
-
-
 def _full_claim():
     return ExtractedClaim(**claim(
         image_ids=[IMG], prediction_ids=[PRED],
@@ -203,7 +200,6 @@ def _full_claim():
 
 def test_validated_collections_cannot_be_mutated_to_bypass_validation():
     c = _full_claim()
-    # The audit's reproduction: appending a duplicate id used to succeed silently.
     with pytest.raises(AttributeError):
         c.image_ids.append(IMG)  # type: ignore[attr-defined]
     with pytest.raises(TypeError):
@@ -211,9 +207,9 @@ def test_validated_collections_cannot_be_mutated_to_bypass_validation():
     with pytest.raises(AttributeError):
         c.evidence.append(EvidenceReference(image_id=IMG))  # type: ignore[attr-defined]
     with pytest.raises(ValidationError):
-        c.evidence[0].image_id = IMG2  # nested reference is frozen
+        c.evidence[0].image_id = IMG2
     with pytest.raises(ValidationError):
-        c.evidence[0].crop.x_max = 0.9  # nested crop is frozen
+        c.evidence[0].crop.x_max = 0.9
     result = ClaimExtractionResult(claims=[c])
     with pytest.raises(AttributeError):
         result.claims.append(c)  # type: ignore[attr-defined]
@@ -223,7 +219,7 @@ def test_validated_collections_cannot_be_mutated_to_bypass_validation():
 def test_input_lists_are_copied_not_aliased():
     ids = [IMG]
     c = ExtractedClaim(**claim(image_ids=ids))
-    ids.append(IMG)  # mutating the caller's list cannot reach the validated object
+    ids.append(IMG)
     assert c.image_ids == (IMG,)
 
 
@@ -241,7 +237,7 @@ def test_json_format_unchanged_arrays():
 
 @pytest.mark.parametrize("first,second", [
     ({"image_id": str(IMG)}, {"image_id": str(IMG)}),
-    ({"image_id": str(IMG), "note": "a"}, {"image_id": str(IMG), "note": "b"}),  # note is not identity
+    ({"image_id": str(IMG), "note": "a"}, {"image_id": str(IMG), "note": "b"}),
     ({"image_id": str(IMG), "crop": BOX}, {"image_id": str(IMG), "crop": dict(BOX)}),
     ({"image_id": str(IMG), "prediction_id": str(PRED)}, {"image_id": str(IMG), "prediction_id": str(PRED)}),
 ])

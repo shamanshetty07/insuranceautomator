@@ -1,25 +1,4 @@
-"""Run damage detection on an inspection's images and persist the results.
-
-One DetectionRun per image, run sequentially. Each run is committed as `running`
-before inference, so a crash leaves a visible (stale) running run instead of
-nothing. Ordinary exceptions and BaseException (cancellation, KeyboardInterrupt) both
-leave the run `failed`; only a hard process crash or a failed final commit can leave
-`running`, which `fail_stale_runs` / `python -m app.services.detection.recovery` clears.
-A failure on one image becomes a `failed` run with a client-safe message
-and never aborts the remaining images. Timestamps are wall-clock (not the
-transaction-start time of now()) so completed_at - created_at is the real duration.
-
-Liveness and recovery (status transitions: running -> completed | failed, once):
-- While a worker holds a run (waiting for the inference lock, then inferring), a
-  RunHeartbeat thread refreshes `heartbeat_at`. Recovery fails only runs whose last
-  heartbeat (created_at for rows without one) is older than the stale threshold, so
-  a slow but live run is never failed just because it started long ago.
-- Every transition out of `running` is conditional on the run still being `running`:
-  recovery and the interruption marker use a conditional UPDATE; the worker's final
-  write locks the row (SELECT ... FOR UPDATE) and re-checks. Whoever commits first
-  wins; the other changes nothing. A run that recovery failed stays failed, without
-  predictions, so no row is ever completed with a stale interruption error.
-"""
+"""Run damage detection on an inspection's images and persist the results."""
 
 import logging
 import math
@@ -70,18 +49,7 @@ def stale_cutoff(now: datetime, max_age: timedelta) -> datetime:
 
 
 def fail_stale_runs(db: Session, max_age: timedelta, now: datetime | None = None) -> int:
-    """Mark `running` runs with no sign of life for max_age as failed; return how many.
-
-    Last sign of life is heartbeat_at, or created_at for rows written before heartbeats
-    existed. One atomic conditional UPDATE (status still 'running' AND last seen before
-    the cutoff): Postgres re-checks both conditions on rows a concurrent transaction
-    changed, so a run a worker just finished, a run another recovery just failed, and a
-    run whose heartbeat just advanced are all left alone. Idempotent. Sets
-    completed_at, as COMPLETED_AT_CHECK requires for failed runs.
-
-    max_age must be several heartbeat intervals (Settings enforces >= 4x), so a single
-    missed beat cannot make a live run look abandoned.
-    """
+    """Mark `running` runs with no sign of life for max_age as failed; return how many."""
     moment = now or _now()
     last_seen = func.coalesce(DetectionRun.heartbeat_at, DetectionRun.created_at)
     result = db.execute(
@@ -95,15 +63,7 @@ def fail_stale_runs(db: Session, max_age: timedelta, now: datetime | None = None
 
 
 class RunHeartbeat:
-    """Refresh one running run's heartbeat_at from a daemon thread until the block exits.
-
-    Each beat is its own short transaction on its own pooled connection (never the
-    request's Session, which is not thread-safe) and only touches a run that is still
-    `running`. A failed beat is logged and retried at the next interval. If beats keep
-    failing for longer than the stale threshold (e.g. the database is unreachable),
-    recovery may fail the run; the worker's final write then sees that and keeps the
-    failure. A hung inference keeps beating: liveness of the process, not progress.
-    """
+    """Refresh one running run's heartbeat_at from a daemon thread until the block exits."""
 
     def __init__(self, engine: Engine, run_id: uuid.UUID, interval_seconds: float) -> None:
         if interval_seconds <= 0:
@@ -122,7 +82,7 @@ class RunHeartbeat:
 
     def __exit__(self, *exc: object) -> None:
         self._stop.set()
-        self._thread.join(timeout=self._interval)  # a beat in flight is one short UPDATE
+        self._thread.join(timeout=self._interval)
         if self._thread.is_alive():
             logger.warning("Heartbeat thread did not stop in time run_id=%s", self._run_id)
 
@@ -146,8 +106,7 @@ HeartbeatFactory = Callable[[uuid.UUID], AbstractContextManager[object]]
 
 
 def _fail_if_running(db: Session, run_id: uuid.UUID) -> None:
-    """Best-effort, atomic: fail this run only if it is still `running`. Never raises
-    an ordinary exception (it runs while another error is propagating)."""
+    """Best-effort, atomic: fail this run only if it is still `running`."""
     try:
         db.rollback()
         db.execute(
@@ -168,8 +127,7 @@ def _require_inspection(db: Session, inspection_id: uuid.UUID) -> None:
 
 @dataclass(frozen=True)
 class _Target:
-    """What a run needs from an image, read up front: a rollback expires ORM objects,
-    and the image may be deleted concurrently while earlier images are processed."""
+    """What a run needs from an image, read up front: a rollback expires ORM objects, and the image may be deleted concurrently while earlier images are processed."""
 
     image_id: uuid.UUID
     storage_path: str
@@ -186,7 +144,7 @@ def _select_images(
     targets = [_Target(image_id=row.id, storage_path=row.storage_path) for row in rows]
     if image_ids is not None:
         wanted = set(image_ids)
-        if not wanted <= {t.image_id for t in targets}:  # wrong inspection looks like 404
+        if not wanted <= {t.image_id for t in targets}:
             raise AppError(404, "not_found", "Image not found.")
         return [t for t in targets if t.image_id in wanted]
     if not targets:
@@ -204,7 +162,6 @@ def _to_prediction(run_id: uuid.UUID, detection: Detection, image_id: uuid.UUID)
         box = BoundingBox(**detection.bounding_box) if detection.bounding_box is not None else None
     except (TypeError, ValidationError):
         raise _RunFailure("The detector returned an invalid bounding box.") from None
-    # Not attached to the run yet: nothing reaches the session unless the run succeeds.
     return DamagePrediction(
         detection_run_id=run_id,
         damage_type=detection.damage_type,
@@ -249,12 +206,7 @@ def _finish(
     error: str | None,
     predictions: Sequence[DamagePrediction] = (),
 ) -> bool:
-    """Record the outcome, only while the run is still `running`; True if the run is now final.
-
-    The row is locked and re-read first. If something else (recovery) already ended
-    the run, its state is kept, `predictions` are discarded and True is returned: the
-    run exists and is final. False means nothing could be recorded (logged, rolled back).
-    """
+    """Record the outcome, only while the run is still `running`; True if the run is now final."""
     try:
         db.refresh(run, with_for_update=True)
         current = run.status
@@ -268,7 +220,7 @@ def _finish(
         run.status = status
         run.error_message = error
         run.completed_at = _now()
-    except Exception:  # e.g. the row was deleted with its image
+    except Exception:
         logger.exception("Could not update detection run run_id=%s", run_id)
         db.rollback()
         return False
@@ -304,8 +256,6 @@ def _run_one(
         with heartbeat(run_id):
             return _execute_run(db, storage, detector, target, run, run_id)
     except BaseException:
-        # Cancellation / KeyboardInterrupt / SystemExit: record the run as failed, then
-        # let it propagate (never swallowed). Atomic, so a finished run is not touched.
         _fail_if_running(db, run_id)
         raise
 
@@ -313,7 +263,7 @@ def _run_one(
 def _run_config(detector: DamageDetectionService) -> dict:
     """Stored config: the detector's parameters plus server-recorded package versions."""
     config = detector.config.model_dump(mode="json")
-    config.pop("runtime", None)  # only the server writes this
+    config.pop("runtime", None)
     config["runtime"] = runtime_versions().model_dump(mode="json")
     return config
 
@@ -331,7 +281,6 @@ def _execute_run(
     except _RunFailure as exc:
         error: str | None = str(exc)
     except Exception:
-        # Details (never image contents) stay in the server log.
         logger.exception("Detection failed run_id=%s image_id=%s", run_id, target.image_id)
         error = "Detection failed for this image."
     else:
@@ -358,7 +307,7 @@ def run_detection(
     except DetectorUnavailable as exc:
         raise AppError(503, "detector_unavailable", str(exc)) from None
 
-    engine = db.get_bind().engine  # the Engine even if the session is bound to a Connection
+    engine = db.get_bind().engine
 
     def heartbeat(run_id: uuid.UUID) -> RunHeartbeat:
         return RunHeartbeat(engine, run_id, heartbeat_seconds)

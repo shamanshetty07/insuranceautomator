@@ -7,6 +7,9 @@ import type {
   InspectionImage,
   InspectionImageList,
   InspectionList,
+  ReportDetail,
+  ReportList,
+  VlmStatus,
 } from "../types/api";
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
@@ -16,6 +19,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number | null,
     readonly details: ApiFieldError[] = [],
+    readonly code: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -27,14 +31,15 @@ export const apiUrl = (path: string) => `${BASE_URL}${path}`;
 function errorFromBody(status: number, text: string): ApiError {
   let message = `Request failed (HTTP ${status}).`;
   let details: ApiFieldError[] = [];
+  let code: string | null = null;
   try {
     const body = JSON.parse(text);
     message = body.error?.message ?? message;
     details = body.error?.details ?? [];
+    code = body.error?.code ?? null;
   } catch {
-    // Non-JSON error body: keep the generic message.
   }
-  return new ApiError(message, status, details);
+  return new ApiError(message, status, details, code);
 }
 
 const unreachable = () =>
@@ -75,18 +80,34 @@ export const deleteImage = (inspectionId: string, imageId: string) =>
 
 export const getDetectorStatus = () => request<DetectorStatus>("/detector");
 
-/** Runs detection synchronously; omit imageIds to run on every image of the inspection. */
 export const runDetection = (inspectionId: string, imageIds?: string[]) =>
   request<DetectionRunList>(`/inspections/${encodeURIComponent(inspectionId)}/detections`, {
     method: "POST",
     body: JSON.stringify({ image_ids: imageIds ?? null }),
   });
 
-/** latest=true: newest run per image; false: every run, newest first. */
 export const listDetections = (inspectionId: string, latest = true) =>
   request<DetectionRunList>(`/inspections/${encodeURIComponent(inspectionId)}/detections?latest=${latest}`);
 
-/** Uploads one image with progress (fetch cannot report upload progress, XHR can). */
+export const getVlmStatus = () => request<VlmStatus>("/vlm");
+
+export const listReports = (inspectionId: string) =>
+  request<ReportList>(`/inspections/${encodeURIComponent(inspectionId)}/reports`);
+
+export const getReport = (reportId: string) => request<ReportDetail>(`/reports/${encodeURIComponent(reportId)}`);
+
+export const generateReport = (inspectionId: string) =>
+  request<ReportDetail>(`/inspections/${encodeURIComponent(inspectionId)}/reports`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export const verifyReport = (reportId: string) =>
+  request<ReportDetail>(`/reports/${encodeURIComponent(reportId)}/verifications`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
 export function uploadImage(
   inspectionId: string,
   file: File,

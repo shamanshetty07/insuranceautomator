@@ -1,10 +1,4 @@
-"""Build the EvidenceBundle a report generator sees from stored images and detection runs.
-
-Pure: takes already-loaded rows (e.g. detection_service.list_detection_runs(latest=True))
-and never queries or commits. Only COMPLETED runs contribute detections; an image whose
-latest run failed or is still running contributes the image alone, never "no damage".
-Every detection carries its stored prediction id, so generated claims can cite it.
-"""
+"""Build the EvidenceBundle a report generator sees from stored images and detection runs."""
 
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
@@ -29,11 +23,7 @@ class _Run(Protocol):
 
 
 def evidence_bundle(images: Sequence[tuple[uuid.UUID, Path]], runs: Iterable[_Run]) -> EvidenceBundle:
-    """images: (image_id, resolved stored path) in report order; runs: at most one per image.
-
-    Raises ValueError if a run belongs to an image that is not in `images`, or if two
-    runs are given for one image (the caller must pick the latest; this never guesses).
-    """
+    """images: (image_id, resolved stored path) in report order; runs: at most one per image."""
     order = [image_id for image_id, _ in images]
     if len(set(order)) != len(order):
         raise ValueError("duplicate image in evidence")

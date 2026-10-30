@@ -1,7 +1,4 @@
-"""Local vision-language model (Qwen-VL) adapters. See docs/architecture.md.
-
-Importing this package never imports transformers or torch.
-"""
+"""Local vision-language model (Qwen-VL) adapters. See docs/architecture.md."""
 
 from app.services.vlm.adapters import QwenClaimVerifier, QwenStructuredReportGenerator, VlmLimits
 from app.services.vlm.errors import (

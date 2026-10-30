@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    # The engine connects lazily; startup does not require the database to be up.
     logger.info("Starting application")
     yield
     get_engine().dispose()
@@ -30,7 +29,6 @@ def create_app() -> FastAPI:
     configure_logging(settings.log_level)
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
-    # Added first so CORS (added next) wraps it: its 413/411 then carry CORS headers.
     app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
