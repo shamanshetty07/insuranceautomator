@@ -66,12 +66,15 @@ def test_global_invariants(ctype, verdict, integ, assoc, det):
         assert integ is OK and assoc is ASSOC and ctype in VISUAL
     if verdict is None:
         assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+    # An insufficient-evidence outcome is never final without a human, whatever produced it.
+    if d.verdict is Verdict.INSUFFICIENT_EVIDENCE:
+        assert d.needs_human_review
     # A visual verdict without review needs corroborating detection; missing, failed or
     # incomparable detection never gets less scrutiny than "nothing detected".
     if d.verdict is Verdict.SUPPORTED and not d.needs_human_review:
         assert det is DetectionMatch.MATCHES_CLAIM
-    if d.verdict is Verdict.CONTRADICTED and not d.needs_human_review:
-        assert det is DetectionMatch.CONFLICTS_WITH_CLAIM
+    if d.verdict is Verdict.CONTRADICTED and ctype in VISUAL:
+        assert d.needs_human_review  # a visual contradiction is never final without a human
     if d.verdict is not Verdict.INSUFFICIENT_EVIDENCE and det in UNCORROBORATED:
         assert d.needs_human_review
 
@@ -98,9 +101,34 @@ def test_supported_passthrough(ctype):
         Verdict.SUPPORTED, False, (ReasonCode.VERIFIER_SUPPORTED,))
 
 
-def test_contradicted_passthrough():
-    d = evaluate_claim(make(verdict=Verdict.CONTRADICTED, det=DetectionMatch.CONFLICTS_WITH_CLAIM))
+@pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
+def test_contradicted_with_conflicting_detection_still_needs_review(ctype):
+    # claim-policy-4: a conflict comes from the report's own wording/crops, not independent evidence.
+    d = evaluate_claim(make(ctype, verdict=Verdict.CONTRADICTED, det=DetectionMatch.CONFLICTS_WITH_CLAIM))
+    assert (d.verdict, d.needs_human_review, d.reason_codes) == (
+        Verdict.CONTRADICTED, True, (ReasonCode.DETECTION_CONFLICT_UNCONFIRMED,))
+
+
+def test_contradicted_non_visual_claim_cleared_by_its_gate_is_unchanged():
+    d = evaluate_claim(make(ClaimType.DAMAGE_SEVERITY, verdict=Verdict.CONTRADICTED,
+                            det=DetectionMatch.NOT_APPLICABLE, has_validated_severity_policy=True))
     assert (d.verdict, d.needs_human_review) == (Verdict.CONTRADICTED, False)
+
+
+def test_regression_off_vocabulary_damage_type_never_finalises_a_contradiction():
+    import uuid
+
+    from app.schemas.claims import ExtractedClaim
+    from app.services.evidence_association import PredictionFacts, detection_signal
+
+    img, run, pred = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    claim = ExtractedClaim(claim_id="c1", text="The headlight shows shattered glass", claim_type="damage_type",
+                           damage_type="shattered glass", image_ids=[img], prediction_ids=[pred])
+    det, _ = detection_signal(claim, [img], {pred: PredictionFacts(img, run, "glass shatter", None)},
+                              {img: run}, {img: 1})
+    assert det is DetectionMatch.CONFLICTS_WITH_CLAIM  # vocabulary mismatch reads as a conflict
+    d = evaluate_claim(make(ClaimType.DAMAGE_TYPE, verdict=Verdict.CONTRADICTED, det=det))
+    assert d.verdict is Verdict.CONTRADICTED and d.needs_human_review  # before the fix: no review
 
 
 @pytest.mark.parametrize("ctype", sorted(VISUAL, key=lambda c: c.value))
@@ -145,12 +173,17 @@ def test_gates_never_bypass_hidden_damage_or_evidence_checks(flags, ctype, det):
 
 
 def test_policy_version_bumped_for_review_routing_change():
-    assert cp.POLICY_VERSION == "claim-policy-2"
+    assert cp.POLICY_VERSION == "claim-policy-4"
 
 
-def test_verifier_insufficient_passthrough():
-    d = evaluate_claim(make(verdict=Verdict.INSUFFICIENT_EVIDENCE))
-    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and not d.needs_human_review
+@pytest.mark.parametrize("det", list(DetectionMatch))
+@pytest.mark.parametrize("ctype", sorted(VISUAL))
+def test_verifier_insufficient_always_needs_review(ctype, det):
+    # Regression: rule 17 used to return no review. Conflicting or matching detection
+    # must not turn the verifier's "can't tell" into a final answer either way.
+    d = evaluate_claim(make(ctype, verdict=Verdict.INSUFFICIENT_EVIDENCE, det=det))
+    assert d.verdict is Verdict.INSUFFICIENT_EVIDENCE and d.needs_human_review
+    assert d.reason_codes == (ReasonCode.VERIFIER_INSUFFICIENT,)
 
 
 def assert_review(d, reason):

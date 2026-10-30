@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.schemas.claims import MAX_CLAIMS_PER_REPORT
 from app.schemas.runs import check_image_size_multiple
 
 
@@ -58,12 +59,31 @@ class Settings(BaseSettings):
     # How often a worker refreshes the heartbeat of the run it is processing.
     detector_heartbeat_seconds: int = Field(default=30, gt=0)
 
+    # Local vision-language model (Qwen2-VL / Qwen2.5-VL) for report generation and claim
+    # verification; needs the optional `vlm` extra and a LOCAL model directory (never
+    # downloaded at runtime). "none" disables it. Decoding is greedy (temperature 0).
+    vlm_backend: Literal["none", "transformers"] = "none"
+    vlm_model_path: Path | None = None
+    vlm_model_name: str | None = Field(default=None, max_length=100)
+    vlm_model_version: str | None = Field(default=None, max_length=100)
+    # Expected digest of the model directory (vlm.transformers_runner.model_dir_digest);
+    # any other content is refused before loading. Unset: no pin.
+    vlm_weights_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    vlm_device: str = "cpu"
+    vlm_dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
+    vlm_timeout_seconds: int = Field(default=180, gt=0)
+    vlm_max_new_tokens: int = Field(default=1024, gt=0)
+    vlm_max_images: int = Field(default=6, gt=0)
+    vlm_max_image_pixels: int = Field(default=802_816, gt=0)  # ~896 x 896
+    vlm_max_detections: int = Field(default=30, gt=0)
+    vlm_max_claims: int = Field(default=20, gt=0, le=MAX_CLAIMS_PER_REPORT)
+
     @field_validator("detector_image_size")
     @classmethod
     def check_image_size(cls, v: int) -> int:
         return check_image_size_multiple(v)
 
-    @field_validator("detector_weights_sha256", mode="before")
+    @field_validator("detector_weights_sha256", "vlm_weights_sha256", mode="before")
     @classmethod
     def lowercase_sha256(cls, v: object) -> object:
         return v.strip().lower() if isinstance(v, str) else v

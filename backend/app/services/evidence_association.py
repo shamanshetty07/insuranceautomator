@@ -25,6 +25,7 @@ Detection detail codes (EvidenceRecord.detection_details; why detection_match wa
   prediction_not_latest:<uuid>            cited prediction is not from the image's latest completed run
   detection_present:<uuid>                a cited detection exists (presence claims)
   claim_damage_type_absent                the claim states no structured damage_type
+  claim_text_damage_type_mismatch         the claim's text does not mention its own damage_type
   damage_type_match:<uuid> / damage_type_mismatch:<uuid>
   location_overlap:<uuid> / location_no_overlap:<uuid> / location_unclear:<uuid>
   location_not_given:<uuid>               no crop pairs the claim with this detection
@@ -166,6 +167,24 @@ def _location(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> 
     return _UNKNOWN, f"location_unclear:{pid}"
 
 
+def _words(text: str) -> list[str]:
+    # Any non-alphanumeric character separates words, so "a dent." / "dent," / "paint-scratch" work.
+    return [w for w in re.split(r"[^0-9a-z]+", text.lower()) if w]
+
+
+def text_mentions_damage_type(text: str, damage_type: str) -> bool:
+    """True if damage_type's words appear as a contiguous word sequence in text.
+
+    Deliberately strict: plurals and synonyms ("scratches", "shattered glass") do not
+    count, so such a claim is inconclusive and reviewed rather than compared. The
+    verifier only reads the text, so the structured damage_type must say the same thing
+    before a detection may corroborate it.
+    """
+    words, phrase = _words(text), _words(damage_type)
+    n = len(phrase)
+    return n > 0 and any(words[i : i + n] == phrase for i in range(len(words) - n + 1))
+
+
 def _compare(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> tuple[str, list[str]]:
     location, loc_detail = _location(claim, pid, facts)
     if claim.claim_type is ClaimType.DAMAGE_LOCATION:
@@ -180,6 +199,8 @@ def _compare(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> t
     # DAMAGE_TYPE
     if claim.damage_type is None:
         return _UNKNOWN, ["claim_damage_type_absent", loc_detail]
+    if not text_mentions_damage_type(claim.text, claim.damage_type):
+        return _UNKNOWN, ["claim_text_damage_type_mismatch", loc_detail]
     if normalize_damage_type(claim.damage_type) == normalize_damage_type(facts.damage_type):
         return (_MATCH if location in (None, _MATCH) else _UNKNOWN), [f"damage_type_match:{pid}", loc_detail]
     # Different class: a conflict only where the detection is at the claimed place (or

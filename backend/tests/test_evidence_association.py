@@ -323,7 +323,8 @@ def test_damage_type_compared_with_the_stored_prediction(world):
     _, (p,) = add_run(db, img, preds=1)  # stored class "dent"
 
     def typed(cid, damage_type):
-        return ExtractedClaim(claim_id=cid, text="t", claim_type=ClaimType.DAMAGE_TYPE,
+        return ExtractedClaim(claim_id=cid, text=f"A {damage_type or 'damaged area'} is visible",
+                              claim_type=ClaimType.DAMAGE_TYPE,
                               damage_type=damage_type, image_ids=[img.id], prediction_ids=[p.id])
 
     res = associate_claims(db, storage, insp.id, [typed("a", "Dent"), typed("b", "scratch"), typed("c", None)])

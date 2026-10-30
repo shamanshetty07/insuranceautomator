@@ -21,6 +21,9 @@ class Detection:
     confidence: float
     bounding_box: dict[str, float] | None = None
     segmentation_data: list[Any] | None = None
+    # The stored DamagePrediction id, once persisted. Detectors leave it None; evidence
+    # built from stored runs sets it so a report generator can cite the prediction.
+    prediction_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)

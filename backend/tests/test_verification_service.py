@@ -113,9 +113,9 @@ def _evidence(cid, det=DetectionMatch.MATCHES_CLAIM):
                          ((_IMG, Path("unused.jpg")),), (), (), ())
 
 
-def _row_for(label):
+def _row_for(label, det=DetectionMatch.MATCHES_CLAIM):
     claim = _claim("c1", "dent")
-    ev = _evidence("c1")
+    ev = _evidence("c1", det)
     raw = vs._ask_verifier(_OneLabel({"dent": label}), claim, ev)
     decision = claim_policy.evaluate_claim(vs._policy_input(claim, ev, raw.outcome))
     return vs._build_row(uuid.uuid4(), claim, ev, raw, decision)
@@ -132,6 +132,17 @@ def test_regression_omitted_damage_label_builds_a_row_the_database_accepts():
     assert "omitted_damage" in row.explanation  # what the verifier said is still recorded
 
 
+@pytest.mark.parametrize("det", list(DetectionMatch))
+def test_regression_unverifiable_label_is_stored_for_review(det):
+    # Before claim-policy-3 the stored row had needs_human_review=False, so a verifier's
+    # "can't tell" left the review queue, even when detection conflicted with the claim.
+    row = _row_for("unverifiable", det)
+    assert _db_check_violations(row) == []
+    assert row.verification_label.value == "unverifiable"
+    assert row.verdict is Verdict.INSUFFICIENT_EVIDENCE and row.needs_human_review
+    assert row.policy_reason_codes == [ReasonCode.VERIFIER_INSUFFICIENT.value]
+
+
 # label -> (stored raw label, verdict, review, reason) with a corroborating detection.
 LABEL_ROWS = {
     "supported": ("supported", Verdict.SUPPORTED, False, ReasonCode.VERIFIER_SUPPORTED),
@@ -141,7 +152,7 @@ LABEL_ROWS = {
                        ReasonCode.DETECTION_MATCHES_CONTRADICTED),
     "wrong_damage_type": ("wrong_damage_type", Verdict.INSUFFICIENT_EVIDENCE, True,
                           ReasonCode.DETECTION_MATCHES_CONTRADICTED),
-    "unverifiable": ("unverifiable", Verdict.INSUFFICIENT_EVIDENCE, False, ReasonCode.VERIFIER_INSUFFICIENT),
+    "unverifiable": ("unverifiable", Verdict.INSUFFICIENT_EVIDENCE, True, ReasonCode.VERIFIER_INSUFFICIENT),
     "unsupported_severity": ("unsupported_severity", Verdict.INSUFFICIENT_EVIDENCE, True,
                              ReasonCode.VERIFIER_INVALID),
     "omitted_damage": (None, Verdict.INSUFFICIENT_EVIDENCE, True, ReasonCode.VERIFIER_INVALID),
@@ -341,12 +352,14 @@ def test_visual_contradiction_without_corroborating_detection_needs_review(world
 
 
 @requires_db
-def test_contradiction_corroborated_by_a_conflicting_detection_passes_through(world):
+def test_contradiction_with_a_conflicting_detection_still_needs_review(world):
     # The claim says scratch and cites a detection classed as dent at the same place.
     claim = world.claim("c1", ClaimType.DAMAGE_TYPE, [world.image.id], [world.prediction.id], "scratch",
                         damage_type="scratch")
     row = world.results(world.run([claim], StubClaimVerifier(labels={"scratch": "wrong_damage_type"})))["c1"]
-    assert row.verdict is Verdict.CONTRADICTED and row.needs_human_review is False
+    # claim-policy-4: a conflict is built from generator-written fields, so not final alone
+    assert row.verdict is Verdict.CONTRADICTED and row.needs_human_review is True
+    assert row.policy_reason_codes == [ReasonCode.DETECTION_CONFLICT_UNCONFIRMED.value]
     record = EvidenceRecord.model_validate(row.evidence_reference)
     assert record.detection_match == "conflicts_with_claim"
     assert f"damage_type_mismatch:{world.prediction.id}" in record.detection_details

@@ -45,15 +45,21 @@ Rule precedence (first matching rule wins):
                                          -> the verifier's verdict, review (verifier alone)
  15. verifier SUPPORTED (MATCHES; NOT_APPLICABLE on a non-visual claim)
                                          -> supported, no review
- 16. verifier CONTRADICTED (CONFLICTS; NOT_APPLICABLE on a non-visual claim)
+ 16. verifier CONTRADICTED + detection CONFLICTS_WITH_CLAIM
+                                         -> contradicted, review (conflict not independent)
+     verifier CONTRADICTED (NOT_APPLICABLE on a non-visual claim)
                                          -> contradicted, no review
- 17. verifier INSUFFICIENT_EVIDENCE      -> insufficient_evidence, no review
+ 17. verifier INSUFFICIENT_EVIDENCE      -> insufficient_evidence, review (any detection)
 
 Rule 14 means a visual claim never gets less scrutiny because detection is missing:
 an image never analysed, with only a failed run, or whose detections could not be
 compared with the claim is reviewed, like an image with zero detections (rule 13).
 A detection match is only consistency of cited evidence, never proof (see
 evidence_association), so it can only withhold review, never create a verdict.
+Rule 16: a conflict is derived from generator-written fields (the claim's damage_type
+wording, its chosen crops), so it is not independent evidence; an off-vocabulary word
+("shattered glass" vs the class "glass shatter") would otherwise finalise a
+contradiction. A visual claim is therefore never contradicted without review.
 """
 
 import enum
@@ -109,6 +115,7 @@ class ReasonCode(str, enum.Enum):
     DETECTION_UNAVAILABLE = "detection_unavailable"
     VERIFIER_SUPPORTED = "verifier_supported"
     VERIFIER_CONTRADICTED = "verifier_contradicted"
+    DETECTION_CONFLICT_UNCONFIRMED = "detection_conflict_unconfirmed"
     VERIFIER_INSUFFICIENT = "verifier_insufficient"
 
 
@@ -142,7 +149,9 @@ class ClaimPolicyDecision:
 
 # Recorded on every VerificationRun; bump when a rule or reason code changes behavior.
 # 2: detection that cannot corroborate a visual claim (inconclusive/unavailable) -> review.
-POLICY_VERSION = "claim-policy-2"
+# 3: verifier INSUFFICIENT_EVIDENCE -> review (was no review).
+# 4: verifier CONTRADICTED + detection CONFLICTS_WITH_CLAIM -> review (was no review).
+POLICY_VERSION = "claim-policy-4"
 
 _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}
@@ -185,7 +194,6 @@ def _uncorroborated_reason(ctype: ClaimType, det: DetectionMatch) -> ReasonCode 
 def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
     """Return exactly one decision for ``inp``; never raises on odd claim types/verdicts."""
     ctype = _coerce_enum(ClaimType, inp.claim_type)
-    ins = Verdict.INSUFFICIENT_EVIDENCE
 
     # 1-6: claim-type policies (a verifier verdict can never override these).
     if ctype is None:
@@ -282,12 +290,18 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
                 (uncorroborated,),
                 "Contradicted by the verifier alone; detection could not be compared with the claim.",
             )
+        if det is DetectionMatch.CONFLICTS_WITH_CLAIM:
+            return ClaimPolicyDecision(
+                Verdict.CONTRADICTED,
+                True,
+                (ReasonCode.DETECTION_CONFLICT_UNCONFIRMED,),
+                "Verifier contradicts the claim and the cited detection disagrees with its wording; "
+                "that disagreement comes from the report itself, so a human confirms it.",
+            )
         return ClaimPolicyDecision(
             Verdict.CONTRADICTED,
             False,
             (ReasonCode.VERIFIER_CONTRADICTED,),
             "Verifier contradicts the claim from the photos.",
         )
-    return ClaimPolicyDecision(
-        ins, False, (ReasonCode.VERIFIER_INSUFFICIENT,), "Verifier reports insufficient evidence."
-    )
+    return _insufficient(ReasonCode.VERIFIER_INSUFFICIENT, "Verifier reports insufficient evidence.")

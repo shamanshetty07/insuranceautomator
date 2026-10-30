@@ -1,6 +1,6 @@
 # Vehicle Damage AI
 
-Vehicle damage assessment and insurance-report verification. **Current scope (Phase 3)**: inspections, image capture/upload with validation and local storage, image management, and optional local YOLO damage detection (API and UI). The backend also has a model-independent claim-verification pipeline (claim schemas, evidence association, a deterministic verdict policy, and `verify_report`) that is tested with development stubs only. It has no HTTP endpoint and no frontend, and nothing generates reports yet; no report-generation or verification model is wired in.
+Vehicle damage assessment and insurance-report verification. **Current scope (Phase 3)**: inspections, image capture/upload with validation and local storage, image management, and optional local YOLO damage detection (API and UI). The backend also has a model-independent claim-verification pipeline (claim schemas, evidence association, a deterministic verdict policy, and `verify_report`) that is tested with development stubs only. It has no HTTP endpoint and no frontend. Local Qwen-VL adapters for structured report generation and claim verification exist in `backend/app/services/vlm/` but are tested only with a fake model: no weights are included and real inference has not been run (see `backend/scripts/vlm_smoke.py`). Nothing persists generated reports yet.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/api-design.md](docs/api-design.md).
 
@@ -91,6 +91,7 @@ It fails only runs whose worker has sent no heartbeat for `DETECTOR_STALE_RUN_MI
 | | `DETECTOR_IMAGE_SIZE` | Inference size; must be a positive multiple of 32 (never rounded), and of the loaded model's stride |
 | | `DETECTOR_WEIGHTS_SHA256` | Optional pin: weights with any other SHA-256 are refused before loading |
 | | `DETECTOR_SAFE_LOAD` | Opt-in restricted checkpoint loading; refuses to load if it cannot be guaranteed (off by default, not yet tried with a real checkpoint) |
+| | `VLM_BACKEND`, `VLM_MODEL_PATH`, `VLM_MODEL_NAME`, `VLM_MODEL_VERSION`, `VLM_WEIGHTS_SHA256`, `VLM_DEVICE`, `VLM_DTYPE`, `VLM_TIMEOUT_SECONDS` | Local Qwen-VL (`none` disables it; needs the `vlm` extra and a local safetensors snapshot, never downloaded at runtime) |
 | | `DETECTOR_STALE_RUN_MINUTES`, `DETECTOR_HEARTBEAT_SECONDS` | Stale-run recovery threshold and worker heartbeat interval (threshold must be >= 4 heartbeats) |
 | `frontend/.env` | `VITE_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
 | | `VITE_MAX_IMAGE_BYTES`, `VITE_MAX_IMAGES_PER_INSPECTION` | Client-side limits for fast feedback; keep equal to the backend values |

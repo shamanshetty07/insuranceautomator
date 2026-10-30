@@ -7,7 +7,13 @@ import pytest
 from app.schemas.claims import ClaimType, ExtractedClaim
 from app.schemas.damage import BoundingBox
 from app.services.claim_policy import DetectionMatch as D
-from app.services.evidence_association import PredictionFacts, box_iou, detection_signal, normalize_damage_type
+from app.services.evidence_association import (
+    PredictionFacts,
+    box_iou,
+    detection_signal,
+    normalize_damage_type,
+    text_mentions_damage_type,
+)
 
 IMG, IMG2 = uuid.uuid4(), uuid.uuid4()
 RUN, RUN2, OLD_RUN = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -18,11 +24,12 @@ FAR = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}  # disjoint from 
 EDGE = {"x_min": 0.4, "y_min": 0.4, "x_max": 0.8, "y_max": 0.8}  # small overlap, IoU ~0.04
 
 
-def claim(ctype=ClaimType.DAMAGE_TYPE, damage_type="dent", preds=(P1,), crops=None, images=(IMG,)):
+def claim(ctype=ClaimType.DAMAGE_TYPE, damage_type="dent", preds=(P1,), crops=None, images=(IMG,), text=None):
     crops = crops or {}
     evidence = [{"image_id": str(IMG), "prediction_id": str(p), "crop": crops[p]} for p in preds if p in crops]
     return ExtractedClaim(
-        claim_id="c1", text="t", claim_type=ctype, damage_type=damage_type,
+        claim_id="c1", text=text or f"There is a {damage_type or 'damaged area'} on the door.",
+        claim_type=ctype, damage_type=damage_type,
         image_ids=list(images), prediction_ids=list(preds), evidence=evidence,
     )
 
@@ -170,3 +177,45 @@ def test_iou_and_normalisation():
     assert box_iou(a, touching) == 0.0
     assert 0 < box_iou(a, BoundingBox(**EDGE)) < 0.3
     assert normalize_damage_type("  Glass  Crack ") == "glass_crack"
+
+
+# --- claim text must state its own damage_type (claim-policy-4 sprint) ---------------------
+
+
+def test_text_mentioning_the_damage_type_can_match():
+    assert signal(claim(text="A dent on the rear door."))[0] is D.MATCHES_CLAIM
+
+
+def test_regression_text_not_mentioning_the_damage_type_is_inconclusive():
+    # Before: text "Scratch on the door" + damage_type "dent" + a dent detection matched,
+    # and a supporting verifier (which reads only the text) finalised it without review.
+    match, details = signal(claim(text="Scratch on the door"))
+    assert match is D.INCONCLUSIVE and "claim_text_damage_type_mismatch" in details
+
+
+def test_mismatched_text_is_not_turned_into_a_conflict_either():
+    match, details = signal(claim(damage_type="scratch", text="A dent on the door"))
+    assert match is D.INCONCLUSIVE and "claim_text_damage_type_mismatch" in details
+
+
+def test_hyphenated_damage_type_matches_spaced_text():
+    c = claim(damage_type="Paint-Scratch", text="a paint scratch on the door")
+    assert signal(c, {P1: facts("paint_scratch")})[0] is D.MATCHES_CLAIM
+
+
+def test_text_rule_is_strict_about_plurals_and_synonyms():
+    assert signal(claim(damage_type="scratch", text="scratches on the door"), {P1: facts("scratch")})[0] is D.INCONCLUSIVE
+    assert not text_mentions_damage_type("shattered glass on the lamp", "glass shatter")
+    assert text_mentions_damage_type("Glass shatter visible", "glass_shatter")
+    assert not text_mentions_damage_type("redentify", "dent")  # whole words only
+
+
+@pytest.mark.parametrize("text", [
+    "Image 1 shows a dent.", "A dent, near the lamp.", "(dent) visible", "Dent!", "a DENT on the door",
+])
+def test_punctuation_around_the_damage_type_still_counts_as_a_mention(text):
+    # Regression: "dent." used to be one word, so sentences ending in the type were inconclusive.
+    from app.services.evidence_association import text_mentions_damage_type
+
+    assert text_mentions_damage_type(text, "dent")
+    assert not text_mentions_damage_type(text.lower().replace("dent", "dents"), "dent")  # still strict on plurals
