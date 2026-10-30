@@ -25,12 +25,14 @@ from app.services.claim_policy import (
     DetectionMatch,
     EvidenceAssociation,
     EvidenceIntegrity,
+    EvidenceQuality,
     ReasonCode,
     VerifierOutcome,
     evaluate_claim,
 )
 from app.services.evidence_association import ClaimEvidence
 from app.services.types import ClaimVerdict, ModelInfo
+from app.services.verdict_consistency import PriorVerdict, check_consistency
 
 
 class _Strict(BaseModel):
@@ -44,6 +46,8 @@ class Trial(_Strict):
     detection_match: DetectionMatch
     raw_label: str | None = Field(default=None, max_length=64)
     verifier_errored: bool = False
+    prior_raw_labels: tuple[str | None, ...] = ()
+    evidence_quality: EvidenceQuality = EvidenceQuality.ADEQUATE
 
 
 class TrialSet(_Strict):
@@ -133,9 +137,13 @@ def run_configurations(
         asked = vs._ask_verifier(_Replay(trial), extracted, ev)
         out[Configuration.BASELINE].append(baseline_outcome(claim.claim_key))
         out[Configuration.SELF_VERIFICATION].append(_self_verification(claim.claim_key, asked))
-        skipped = vs._decided_without_verifier(extracted, ev)
+        skipped = vs._decided_without_verifier(extracted, ev, trial.evidence_quality)
         outcome = VerifierOutcome(verdict=None) if skipped else asked.outcome
-        decision = evaluate_claim(vs._policy_input(extracted, ev, outcome, independent))
+        priors = [PriorVerdict(n, label, _Replay.model) for n, label in enumerate(trial.prior_raw_labels)]
+        consistent = skipped or not check_consistency(asked.label, _Replay.model, priors).disagrees
+        decision = evaluate_claim(
+            vs._policy_input(extracted, ev, outcome, independent, consistent, trial.evidence_quality)
+        )
         raw_verdict = None if skipped or not isinstance(asked.outcome.verdict, Verdict) else asked.outcome.verdict
         out[Configuration.HYBRID].append(
             outcome_from_decision(claim.claim_key, Configuration.HYBRID, decision, raw_verdict, not skipped)

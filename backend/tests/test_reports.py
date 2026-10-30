@@ -146,7 +146,7 @@ def test_stored_configs_accept_rows_written_before_provenance_existed():
 def test_verification_run_config_comes_from_the_verifier():
     verifier = QwenClaimVerifier(FakeRunner(), VlmLimits())
     config = run_config(verifier, verifier_independent=False).model_dump(mode="json")
-    assert config["prompt_version"] == "qwen-verify-1" and config["policy_version"] == "claim-policy-6"
+    assert config["prompt_version"] == "qwen-verify-2" and config["policy_version"] == "claim-policy-7"
     assert config["verifier_independent"] is False and config["model"]["weights_sha256"] == "f" * 64
     with pytest.raises(TypeError):
         run_config(types.SimpleNamespace(model=ModelInfo("m", "1")), True)
@@ -168,9 +168,10 @@ def test_stubs_are_refused_only_in_production(monkeypatch):
 @pytest.mark.parametrize("gen_sha,ver,expected", [
     ("a" * 64, ModelInfo("qwen", "1", "a" * 64), False),
     ("a" * 64, ModelInfo("other", "9", "a" * 64), False),
-    ("a" * 64, ModelInfo("qwen", "1", "b" * 64), True),
+    ("a" * 64, ModelInfo("qwen", "1", "b" * 64), False),
+    ("a" * 64, ModelInfo("other", "1", "b" * 64), True),
     (None, ModelInfo("qwen", "1", "b" * 64), False),
-    (None, ModelInfo("other", "1"), True),
+    (None, ModelInfo("other", "1"), False),
 ])
 def test_verifier_independence(gen_sha, ver, expected):
     config = {"model": {"weights_sha256": gen_sha}} if gen_sha else {"prompt_version": "p1"}

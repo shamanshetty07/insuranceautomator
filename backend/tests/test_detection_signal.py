@@ -87,9 +87,10 @@ def test_same_class_at_a_different_place_is_inconclusive():
     assert signal(claim(crops={P1: FAR}))[0] is D.INCONCLUSIVE
 
 
-def test_location_overlap_matches():
+def test_location_overlap_is_not_a_match_because_the_location_text_is_unchecked():
     match, details = signal(claim(ClaimType.DAMAGE_LOCATION, crops={P1: NEAR}))
-    assert match is D.MATCHES_CLAIM and f"location_overlap:{P1}" in details
+    assert match is D.INCONCLUSIVE
+    assert f"location_overlap:{P1}" in details and "location_text_unchecked" in details
 
 
 def test_location_without_any_overlap_conflicts():
@@ -195,3 +196,62 @@ def test_punctuation_around_the_damage_type_still_counts_as_a_mention(text):
 
     assert text_mentions_damage_type(text, "dent")
     assert not text_mentions_damage_type(text.lower().replace("dent", "dents"), "dent")
+
+
+def located_claim(refs, ctype=ClaimType.DAMAGE_TYPE, damage_type="dent", preds=(P1,), images=(IMG,)):
+    return ExtractedClaim(
+        claim_id="c1", text=f"There is a {damage_type or 'damaged area'} on the door.", claim_type=ctype,
+        damage_type=damage_type, image_ids=list(images), prediction_ids=list(preds),
+        evidence=[{"image_id": str(i), "prediction_id": str(p) if p else None, "crop": c} for i, p, c in refs],
+    )
+
+
+def test_matching_type_with_the_claims_crop_elsewhere_is_not_a_match():
+    match, details = signal(located_claim([(IMG, None, FAR)]))
+    assert match is D.INCONCLUSIVE
+    assert f"location_crop_uncovered:{IMG}" in details and f"location_elsewhere:{P1}" in details
+
+
+def test_unpaired_crop_on_the_detection_box_still_matches():
+    assert signal(located_claim([(IMG, None, NEAR)]))[0] is D.MATCHES_CLAIM
+
+
+def test_matching_type_on_another_image_than_the_claims_crop_is_not_a_match():
+    c = located_claim([(IMG, None, BOX)], preds=(P2,), images=(IMG, IMG2))
+    match, details = signal(c, {P2: facts(image=IMG2, run=RUN2)}, latest_run={IMG: RUN, IMG2: RUN2},
+                            latest_count={IMG: 0, IMG2: 1}, images=(IMG, IMG2))
+    assert match is D.INCONCLUSIVE and f"location_crop_uncovered:{IMG}" in details
+
+
+def test_second_cited_detection_away_from_the_claims_crop_is_not_a_match():
+    preds = {P1: facts(), P2: facts(box=FAR)}
+    match, details = signal(located_claim([(IMG, P1, BOX)], preds=(P1, P2)), preds)
+    assert match is D.INCONCLUSIVE and f"location_elsewhere:{P2}" in details
+
+
+def test_crops_disagreeing_about_one_detection_are_not_a_match():
+    match, details = signal(located_claim([(IMG, P1, BOX), (IMG, P1, FAR)]))
+    assert match is D.INCONCLUSIVE and f"location_crops_disagree:{P1}" in details
+
+
+def test_crop_drawn_on_another_image_than_its_detection_is_not_a_match():
+    c = located_claim([(IMG2, P1, BOX)], images=(IMG, IMG2))
+    match, details = signal(c, latest_run={IMG: RUN, IMG2: RUN2}, latest_count={IMG: 1, IMG2: 0},
+                            images=(IMG, IMG2))
+    assert match is D.INCONCLUSIVE and f"location_crop_image_mismatch:{P1}" in details
+
+
+def test_boxless_detection_cannot_confirm_the_claims_crop():
+    match, details = signal(located_claim([(IMG, None, BOX)]), {P1: facts(box=None)})
+    assert match is D.INCONCLUSIVE and f"detection_box_absent:{P1}" in details
+
+
+def test_untyped_presence_claim_with_its_crop_elsewhere_is_not_a_match():
+    c = located_claim([(IMG, None, FAR)], ctype=ClaimType.VISIBLE_DAMAGE_PRESENCE, damage_type=None)
+    assert signal(c, {P1: facts("scratch")})[0] is D.INCONCLUSIVE
+
+
+def test_location_demotions_never_turn_a_conflict_into_something_else():
+    c = located_claim([(IMG, None, FAR)], damage_type="scratch")
+    match, details = signal(c)
+    assert match is D.CONFLICTS_WITH_CLAIM and not any(d.startswith("location_crop") for d in details)

@@ -26,6 +26,7 @@ from app.services.evidence_association import (
     detection_signal,
     text_mentions_damage_type,
 )
+from app.services.evidence_quality import ImageQualityFacts, QualityLimits, assess_image
 from app.services.report_service import check_citations
 from app.services.types import ClaimVerdict, Detection, EvidenceBundle, ImageRef, ModelInfo
 from app.services.vlm.adapters import QwenClaimVerifier, QwenStructuredReportGenerator, VlmLimits
@@ -41,6 +42,7 @@ BOX = {"x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
 FAR = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}
 LIMITS = VlmLimits(timeout_seconds=5, max_claims=5, max_images=2, max_image_pixels=200_000)
 VISUAL = (ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION)
+QUALITY_LIMITS = QualityLimits(min_side_px=32, vlm_max_image_pixels=802_816)
 
 
 def make_claim(ctype=ClaimType.DAMAGE_TYPE, text="There is a dent on the front door.", damage_type="dent",
@@ -275,7 +277,7 @@ class TestEvidenceIntegrityLayer:
         assert rec.association == "unresolved" and rec.problems == (f"image_not_in_inspection:{FOREIGN_IMG}",)
 
     @pytest.mark.parametrize("crop,expected", [
-        (BOX, D.MATCHES_CLAIM),
+        (BOX, D.INCONCLUSIVE),
         (FAR, D.CONFLICTS_WITH_CLAIM),
         ({"x_min": 0.4, "y_min": 0.4, "x_max": 0.8, "y_max": 0.8}, D.INCONCLUSIVE),
     ])
@@ -292,10 +294,10 @@ class TestEvidenceIntegrityLayer:
     def test_damage_type_inconsistent_with_detection(self, text, damage_type, detected, expected):
         assert signal(make_claim(text=text, damage_type=damage_type), {P1: facts(detected)}) is expected
 
-    def test_limitation_negated_claim_text_still_counts_as_a_mention(self):
+    def test_negated_claim_text_still_mentions_the_type_but_never_matches(self):
         text = "There is no dent on the door."
         assert text_mentions_damage_type(text, "dent")
-        assert signal(make_claim(text=text)) is D.MATCHES_CLAIM
+        assert signal(make_claim(text=text)) is D.INCONCLUSIVE
 
     @pytest.mark.parametrize("damage_type,detected,expected", [
         ("dent", "scratch", D.INCONCLUSIVE),
@@ -370,9 +372,19 @@ class TestEscalationLayer:
         w, h = verifier._runner.requests[0].images[0].size
         assert w * h <= LIMITS.max_image_pixels and w < 2000 and h < 1000
 
-    def test_limitation_no_image_quality_gate_blurry_tiny_image_can_be_accepted(self, tmp_path):
+    def test_tiny_image_is_insufficient_once_its_stored_size_is_assessed(self, tmp_path):
         path = save_image(tmp_path / "blur.png", (12, 9), blur=True)
+        ev = _qwen_evidence(path)
+        quality = vs.QUALITY_OF_EFFECT[assess_image(ImageQualityFacts(IMG, 12, 9), QUALITY_LIMITS).effect]
+        assert vs._decided_without_verifier(make_claim(), ev, quality)
+        d = evaluate_claim(vs._policy_input(make_claim(), ev, VerifierOutcome(Verdict.SUPPORTED), quality=quality))
+        assert (disposition(d), d.reason_codes) == (Disposition.HUMAN_REVIEW, (R.EVIDENCE_QUALITY_INSUFFICIENT,))
+
+    def test_limitation_blurry_image_of_adequate_size_can_still_be_accepted(self, tmp_path):
+        path = save_image(tmp_path / "blur.png", (64, 48), blur=True)
+        quality = vs.QUALITY_OF_EFFECT[assess_image(ImageQualityFacts(IMG, 64, 48), QUALITY_LIMITS).effect]
         _, d, disp = escalate(_qwen(['{"label": "supported"}']), make_claim(), _qwen_evidence(path))
+        assert quality is vs.EvidenceQuality.ADEQUATE
         assert disp is Disposition.ACCEPTED and d.reason_codes == (R.VERIFIER_SUPPORTED,)
 
     @pytest.mark.parametrize("raw", [
@@ -454,11 +466,11 @@ class TestEscalationLayer:
         _, d, disp = escalate(FakeVerifier("supported"), make_claim(), make_evidence(det), independent)
         assert (disp, d.reason_codes) == (Disposition.HUMAN_REVIEW, (reason,))
 
-    def test_limitation_negated_claim_with_wrong_support_is_accepted(self):
+    @pytest.mark.parametrize("det", [D.MATCHES_CLAIM, D.INCONCLUSIVE])
+    def test_negated_claim_with_wrong_support_goes_to_review(self, det):
         c = make_claim(text="There is no dent on the door.")
-        det = signal(c)
-        _, _, disp = escalate(FakeVerifier("supported"), c, make_evidence(det))
-        assert det is D.MATCHES_CLAIM and disp is Disposition.ACCEPTED
+        _, d, disp = escalate(FakeVerifier("supported"), c, make_evidence(det))
+        assert disp is Disposition.HUMAN_REVIEW and R.CLAIM_NOT_POSITIVE_ASSERTION in d.reason_codes
 
     def test_presence_typed_claim_no_longer_escapes_the_damage_type_check(self):
         c = make_claim(ClaimType.VISIBLE_DAMAGE_PRESENCE, "There is a dent on the door.", "dent")

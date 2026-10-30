@@ -193,6 +193,7 @@ def test_regression_one_omitted_label_no_longer_loses_the_whole_run(monkeypatch)
     claims = [_claim("ok", "fine"), _claim("odd", "omitted"), _claim("ok2", "also fine")]
     evidence = [_evidence(c.claim_id) for c in claims]
     monkeypatch.setattr(vs, "associate_claims", lambda *a, **k: evidence)
+    monkeypatch.setattr(vs, "assess_claim_quality", lambda db, claims, ev, limits: [vs.ClaimQuality()] * len(claims))
     monkeypatch.setattr(vs, "_load_run", lambda db, run_id: run_id)
     failed = []
     monkeypatch.setattr(vs, "_fail_if_running", lambda db, run_id, msg: failed.append(msg))
@@ -211,6 +212,7 @@ def test_regression_one_omitted_label_no_longer_loses_the_whole_run(monkeypatch)
 def test_a_save_failure_still_fails_the_run_accurately_and_keeps_no_partial_rows(monkeypatch):
     claims = [_claim("ok", "fine")]
     monkeypatch.setattr(vs, "associate_claims", lambda *a, **k: [_evidence("ok")])
+    monkeypatch.setattr(vs, "assess_claim_quality", lambda db, claims, ev, limits: [vs.ClaimQuality()] * len(claims))
     monkeypatch.setattr(vs, "_load_run", lambda db, run_id: run_id)
     failed = []
     monkeypatch.setattr(vs, "_fail_if_running", lambda db, run_id, msg: failed.append(msg))
@@ -305,7 +307,8 @@ def test_generator_to_verified_results_end_to_end(world):
     assert rows[presence.claim_id].verdict is Verdict.SUPPORTED
     assert rows[presence.claim_id].needs_human_review is True
     assert rows[presence.claim_id].policy_reason_codes == [ReasonCode.DETECTION_INCONCLUSIVE.value]
-    assert rows[typed.claim_id].needs_human_review is False
+    assert rows[typed.claim_id].needs_human_review is True
+    assert rows[typed.claim_id].policy_reason_codes == [ReasonCode.VERIFIER_NOT_INDEPENDENT.value]
     assert rows[typed.claim_id].verdict is Verdict.SUPPORTED
     assert rows[typed.claim_id].verification_label is VerificationLabel.SUPPORTED
     record = EvidenceRecord.model_validate(rows[typed.claim_id].evidence_reference)
@@ -464,7 +467,7 @@ def test_results_link_to_stored_claims_which_are_never_changed(world):
     stored = world.db.get(GeneratedReport, report.id).claims
     assert [(c.claim_id, c.text, c.image_ids) for c in stored] == before
     assert world.results(run)["c1"].report_claim_id == stored[0].id
-    assert run.config["policy_version"] == POLICY_VERSION and run.config["verifier_independent"] is True
+    assert run.config["policy_version"] == POLICY_VERSION and run.config["verifier_independent"] is False
     assert run.config["prompt_version"] == "stub-verifier-1"
 
 

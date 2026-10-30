@@ -4,10 +4,10 @@ import uuid
 from dataclasses import dataclass
 
 from app.services.types import Detection, EvidenceBundle
-from app.services.verdict_mapping import CLAIM_LABELS
+from app.services.verdict_mapping import OFFERED_LABELS
 
 GENERATOR_PROMPT_VERSION = "qwen-report-1"
-VERIFIER_PROMPT_VERSION = "qwen-verify-1"
+VERIFIER_PROMPT_VERSION = "qwen-verify-2"
 
 VISIBLE_CLAIM_TYPES = ("visible_damage_presence", "damage_type", "damage_location")
 
@@ -74,7 +74,7 @@ def generator_user_text(aliases: AliasMap, max_claims: int) -> str:
     return "\n".join(lines)
 
 
-_VERIFIER_LABELS = sorted(label.value for label in CLAIM_LABELS)
+_VERIFIER_LABELS = sorted(label.value for label in OFFERED_LABELS)
 
 VERIFIER_SYSTEM = f"""You check one statement about vehicle damage against the provided photographs.
 Judge only from what is visible. Answer with JSON only:

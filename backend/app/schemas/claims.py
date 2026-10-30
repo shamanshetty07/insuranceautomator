@@ -145,6 +145,7 @@ class EvidenceRecord(_Strict):
     crops: tuple[EvidenceReference, ...] = Field(default=(), max_length=MAX_REFERENCES_PER_CLAIM)
     problems: tuple[str, ...] = Field(default=(), max_length=MAX_REFERENCES_PER_CLAIM)
     detection_details: tuple[str, ...] = Field(default=(), max_length=MAX_REFERENCES_PER_CLAIM)
+    quality_findings: tuple[str, ...] = Field(default=(), max_length=MAX_REFERENCES_PER_CLAIM)
 
 
 class StructuredReport(_Strict):

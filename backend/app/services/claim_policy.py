@@ -29,6 +29,14 @@ class DetectionMatch(str, enum.Enum):
     NOT_APPLICABLE = "not_applicable"
 
 
+class EvidenceQuality(str, enum.Enum):
+    """What the stored metadata says about the cited evidence; never a judgement of the pixels."""
+
+    ADEQUATE = "adequate"
+    QUESTIONABLE = "questionable"
+    INSUFFICIENT = "insufficient"
+
+
 class ReasonCode(str, enum.Enum):
     UNKNOWN_CLAIM_TYPE = "unknown_claim_type"
     HIDDEN_DAMAGE_NOT_VISIBLE = "hidden_damage_not_visible"
@@ -56,6 +64,10 @@ class ReasonCode(str, enum.Enum):
     DETECTION_CONFLICT_UNCONFIRMED = "detection_conflict_unconfirmed"
     VERIFIER_NOT_INDEPENDENT = "verifier_not_independent"
     VERIFIER_INSUFFICIENT = "verifier_insufficient"
+    EVIDENCE_QUALITY_INSUFFICIENT = "evidence_quality_insufficient"
+    EVIDENCE_QUALITY_QUESTIONABLE = "evidence_quality_questionable"
+    VERIFIER_INCONSISTENT_ACROSS_RUNS = "verifier_inconsistent_across_runs"
+    CLAIM_NOT_POSITIVE_ASSERTION = "claim_not_positive_assertion"
 
 
 @dataclass(frozen=True)
@@ -77,6 +89,9 @@ class ClaimPolicyInput:
     has_validated_severity_policy: bool = False
     human_confirmed: bool = False
     verifier_independent: bool = True
+    claim_positive: bool = True
+    verifier_consistent: bool = True
+    evidence_quality: EvidenceQuality = EvidenceQuality.ADEQUATE
 
 
 @dataclass(frozen=True)
@@ -87,7 +102,7 @@ class ClaimPolicyDecision:
     explanation: str
 
 
-POLICY_VERSION = "claim-policy-6"
+POLICY_VERSION = "claim-policy-7"
 
 _VISUAL_TYPES = frozenset(
     {ClaimType.VISIBLE_DAMAGE_PRESENCE, ClaimType.DAMAGE_TYPE, ClaimType.DAMAGE_LOCATION}
@@ -125,6 +140,26 @@ def _uncorroborated_reason(ctype: ClaimType, det: DetectionMatch) -> ReasonCode 
     if det is DetectionMatch.NOT_APPLICABLE and ctype in _VISUAL_TYPES:
         return ReasonCode.DETECTION_INCONCLUSIVE
     return None
+
+
+def _escalations(ctype: ClaimType, inp: ClaimPolicyInput) -> tuple[ReasonCode, ...]:
+    """Conditions that can only add review to a verifier-based decision, never change its verdict."""
+    found = []
+    if not inp.verifier_consistent:
+        found.append(ReasonCode.VERIFIER_INCONSISTENT_ACROSS_RUNS)
+    if ctype in _VISUAL_TYPES and not inp.claim_positive:
+        found.append(ReasonCode.CLAIM_NOT_POSITIVE_ASSERTION)
+    if inp.evidence_quality is not EvidenceQuality.ADEQUATE:
+        found.append(ReasonCode.EVIDENCE_QUALITY_QUESTIONABLE)
+    return tuple(found)
+
+
+def _escalate(decision: ClaimPolicyDecision, reasons: tuple[ReasonCode, ...]) -> ClaimPolicyDecision:
+    if not reasons:
+        return decision
+    codes = decision.reason_codes + tuple(r for r in reasons if r not in decision.reason_codes)
+    note = " Also needs review: " + ", ".join(r.value for r in reasons) + "."
+    return ClaimPolicyDecision(decision.verdict, True, codes, decision.explanation + note)
 
 
 def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
@@ -170,6 +205,11 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
     if inp.integrity is not EvidenceIntegrity.OK:
         reason = _INTEGRITY_REASON.get(inp.integrity, ReasonCode.INTEGRITY_UNCHECKED)
         return _insufficient(reason, "Evidence integrity is not verified OK.")
+    if inp.evidence_quality is EvidenceQuality.INSUFFICIENT:
+        return _insufficient(
+            ReasonCode.EVIDENCE_QUALITY_INSUFFICIENT,
+            "A cited image is below the configured minimum size; it cannot support a visual finding.",
+        )
 
     v_raw = inp.verifier.verdict
     verdict = _coerce_enum(Verdict, v_raw)
@@ -179,7 +219,10 @@ def evaluate_claim(inp: ClaimPolicyInput) -> ClaimPolicyDecision:
         return _insufficient(ReasonCode.VERIFIER_MISSING, "Verifier produced no verdict.")
     if verdict is None:
         return _insufficient(ReasonCode.VERIFIER_INVALID, "Verifier verdict was not recognised.")
+    return _escalate(_verdict_decision(ctype, verdict, inp), _escalations(ctype, inp))
 
+
+def _verdict_decision(ctype: ClaimType, verdict: Verdict, inp: ClaimPolicyInput) -> ClaimPolicyDecision:
     det = inp.detection_match
     uncorroborated = _uncorroborated_reason(ctype, det)
     if verdict is Verdict.SUPPORTED:

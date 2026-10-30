@@ -5,7 +5,7 @@ These are **synthetic policy tests**. They show what the software does with give
 
 Layers:
 
-- **P** is the application policy, `evaluate_claim` (claim-policy-6).
+- **P** is the application policy, `evaluate_claim` (claim-policy-7; see [policy-hardening.md](policy-hardening.md) for the rows this changed).
 - **E** is evidence integrity: alias parsing, `check_citations`, `detection_signal`, `text_mentions_damage_type`, and handling of UNRESOLVED association.
 - **X** is escalation: `_ask_verifier` with a fake or Qwen-adapter verifier, then `evaluate_claim`, then `Disposition`.
 

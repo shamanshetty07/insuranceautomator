@@ -8,6 +8,8 @@ Offline tooling to measure claim verification. Nothing here runs a model, reads 
 | [metrics.md](metrics.md) | Every metric's definition, denominator, zero-denominator behaviour and research question |
 | [annotation-manifest.md](annotation-manifest.md) | The ground-truth manifest format, annotation guidelines, versioning, leakage and privacy rules |
 | [experiment-protocol.md](experiment-protocol.md) | Baseline vs self-verification vs hybrid: design, statistics, threats to validity, failure analysis |
+| [quality-and-confidence.md](quality-and-confidence.md) | Image-quality and detection-confidence signals, safeguards and their limits |
+| [policy-hardening.md](policy-hardening.md) | claim-policy-7: negation, location, quality, repeated-run and model-identity rules |
 
 ## Code
 

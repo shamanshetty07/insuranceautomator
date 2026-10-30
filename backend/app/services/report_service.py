@@ -21,6 +21,7 @@ from app.schemas.claims import StructuredReport
 from app.schemas.runs import EvidenceInputs, GenerationConfig, ModelRecord, StoredGenerationConfig
 from app.services.detection_service import list_detection_runs
 from app.services.evidence_bundle import evidence_bundle
+from app.services.evidence_quality import QualityLimits
 from app.services.image_storage import ImageStorage, StorageError
 from app.services.model_guard import refuse_stub_in_production
 from app.services.provenance import ProvenanceError, attach_predictions_to_report
@@ -213,7 +214,11 @@ def generate_report(
 
 
 def verify_stored_report(
-    db: Session, storage: ImageStorage, provider: ReportModelProvider, report_id: uuid.UUID
+    db: Session,
+    storage: ImageStorage,
+    provider: ReportModelProvider,
+    report_id: uuid.UUID,
+    quality_limits: QualityLimits | None = None,
 ) -> uuid.UUID:
     """Verify a stored report's claims in a new run; returns the run id."""
     if db.get(GeneratedReport, report_id) is None:
@@ -227,7 +232,7 @@ def verify_stored_report(
         verifier = provider.get_verifier()
     except VlmError as exc:
         raise vlm_error_to_app_error(exc) from None
-    return verify_report(db, storage, FailFastVerifier(verifier), report_id).id
+    return verify_report(db, storage, FailFastVerifier(verifier), report_id, quality_limits).id
 
 
 def get_report(db: Session, report_id: uuid.UUID) -> tuple[GeneratedReport, VerificationRun | None]:

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.models.run_status import RunStatus
+from app.models.verification_result import VerificationLabel
 from app.schemas.claims import ClaimType, Verdict
 from app.services import claim_policy
 from app.services.evidence_association import PredictionFacts, detection_signal
@@ -288,11 +289,52 @@ def test_verifier_label_vocabulary_excludes_omitted_damage():
     assert '"unverifiable"' in prompts.VERIFIER_SYSTEM and '"supported"' in prompts.VERIFIER_SYSTEM
 
 
+def test_verifier_is_offered_only_labels_that_map_to_a_verdict():
+    from app.services.verdict_mapping import OFFERED_LABELS, legacy_verdict
+
+    offered = {label for label in VerificationLabel if f'"{label.value}"' in prompts.VERIFIER_SYSTEM}
+    assert offered == OFFERED_LABELS
+    assert all(legacy_verdict(label) is not None for label in offered)
+    assert "unsupported_severity" not in prompts.VERIFIER_SYSTEM
+
+
+def test_a_label_outside_the_offered_schema_still_parses_and_is_left_to_the_policy():
+    assert parse_verdict('{"label": "unsupported_severity"}') == ("unsupported_severity", "")
+
+
+@pytest.mark.parametrize("raw", [
+    '{"label": 1}',
+    '{"label": true}',
+    '{"label": null}',
+    '{"label": {"value": "supported"}}',
+    '{"label": "supported", "explanation": 5}',
+    '{"label": "supported", "explanation": null}',
+    '{"explanation": "no label"}',
+    '{"Label": "supported"}',
+    "```python\n{\"label\": \"supported\"}\n```",
+    "```json\n{\"label\": \"supported\"}\n```\n```json\n{\"label\": \"contradicted\"}\n```",
+    '{"label": "supported"}\n{"label": "contradicted"}',
+    '\ufeff{"label": "supported"}',
+    "1e400",
+])
+def test_parse_verdict_rejects_more_malformed_shapes(raw):
+    with pytest.raises(VlmOutputError):
+        parse_verdict(raw)
+
+
+@pytest.mark.parametrize("label", ["supported\u0000", "sup\u200bported", "SUPPORTED"])
+def test_parse_verdict_returns_near_miss_labels_verbatim_so_they_map_to_nothing(label):
+    from app.services.verdict_mapping import coerce_label
+
+    parsed, _ = parse_verdict(json.dumps({"label": label}))
+    assert coerce_label(parsed) is None
+
+
 def test_configs_record_greedy_decoding_and_prompt_versions():
     runner = FakeRunner()
     g, v = generator(runner).generation_config, verifier(runner).verification_config
     assert (g.prompt_version, g.sampling.temperature, g.sampling.max_new_tokens) == ("qwen-report-1", 0, 1024)
-    assert (v.prompt_version, v.sampling.temperature, v.sampling.max_new_tokens) == ("qwen-verify-1", 0, 256)
+    assert (v.prompt_version, v.sampling.temperature, v.sampling.max_new_tokens) == ("qwen-verify-2", 0, 256)
 
 
 def test_generated_claims_flow_into_the_claim_policy(evidence):

@@ -343,7 +343,7 @@ def test_location_compared_with_the_stored_box(world):
         )
 
     res = associate_claims(db, storage, insp.id, [located("a", BOX), located("b", FAR)])
-    assert [r.detection_match for r in res] == [D.MATCHES_CLAIM, D.CONFLICTS_WITH_CLAIM]
+    assert [r.detection_match for r in res] == [D.INCONCLUSIVE, D.CONFLICTS_WITH_CLAIM]
 
 
 def test_cited_prediction_from_a_superseded_run_is_inconclusive(world):

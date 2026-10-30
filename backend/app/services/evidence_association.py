@@ -27,6 +27,7 @@ from app.schemas.claims import (
 )
 from app.schemas.damage import BoundingBox
 from app.services.claim_policy import DetectionMatch, EvidenceAssociation, EvidenceIntegrity
+from app.services.claim_semantics import assertion_of
 from app.services.image_storage import ImageStorage, StorageError
 
 _VISUAL_TYPES = frozenset(
@@ -163,6 +164,44 @@ def _compare(claim: ExtractedClaim, pid: uuid.UUID, facts: PredictionFacts) -> t
     return (_CONFLICT if location in (None, _MATCH) else _UNKNOWN), [f"damage_type_mismatch:{pid}", loc_detail]
 
 
+def _location_doubts(claim: ExtractedClaim, cited: Mapping[uuid.UUID, PredictionFacts]) -> list[str]:
+    """Reasons the claim's crops point somewhere other than its cited detections; only ever demotes a match.
+
+    Crops are the claim's only machine-readable location. They are compared with boxes, never with
+    the location words, and a crop the generator copied from a detector box proves nothing about them.
+    """
+    doubts: list[str] = []
+    boxes = {pid: _box(f.bounding_box) for pid, f in cited.items()}
+
+    def overlaps(crop: BoundingBox, pid: uuid.UUID) -> bool:
+        box = boxes[pid]
+        return box is not None and box_iou(crop, box) >= LOCATION_MATCH_IOU
+
+    located = [r for r in claim.evidence if r.crop is not None]
+    for ref in located:
+        pid = ref.prediction_id
+        if pid is not None and pid in cited:
+            if cited[pid].image_id != ref.image_id:
+                doubts.append(f"location_crop_image_mismatch:{pid}")
+            elif not overlaps(ref.crop, pid):
+                doubts.append(f"location_crops_disagree:{pid}")
+        elif not any(f.image_id == ref.image_id and overlaps(ref.crop, q) for q, f in cited.items()):
+            doubts.append(f"location_crop_uncovered:{ref.image_id}")
+
+    paired = {r.prediction_id for r in located if r.prediction_id is not None}
+    for pid, f in cited.items():
+        if pid in paired:
+            continue
+        crops = [r.crop for r in located if r.image_id == f.image_id]
+        if not crops:
+            continue
+        if boxes[pid] is None:
+            doubts.append(f"detection_box_absent:{pid}")
+        elif not any(overlaps(c, pid) for c in crops):
+            doubts.append(f"location_elsewhere:{pid}")
+    return doubts
+
+
 def detection_signal(
     claim: ExtractedClaim,
     cited_images: Sequence[uuid.UUID],
@@ -173,6 +212,10 @@ def detection_signal(
     """Compare one ASSOCIATED claim with detection results; pure (no DB, no files)."""
     if claim.claim_type not in _VISUAL_TYPES:
         return DetectionMatch.NOT_APPLICABLE, ()
+    assertion = assertion_of(claim.text)
+    if not assertion.is_positive:
+        cues = (f"claim_cue:{c}" for c in assertion.cues)
+        return DetectionMatch.INCONCLUSIVE, (f"claim_not_positive:{assertion.assertion.value}", *cues)
     if not cited_images:
         return DetectionMatch.INCONCLUSIVE, ()
     not_run = [i for i in cited_images if i not in latest_run]
@@ -196,6 +239,11 @@ def detection_signal(
         details.extend(more)
     details_t = tuple(_dedupe(details))
     if all(o == _MATCH for o in outcomes):
+        doubts = _location_doubts(claim, cited_predictions)
+        if claim.claim_type is ClaimType.DAMAGE_LOCATION:
+            doubts.append("location_text_unchecked")
+        if doubts:
+            return DetectionMatch.INCONCLUSIVE, tuple(_dedupe([*details, *doubts]))
         return DetectionMatch.MATCHES_CLAIM, details_t
     if all(o == _CONFLICT for o in outcomes):
         return DetectionMatch.CONFLICTS_WITH_CLAIM, details_t

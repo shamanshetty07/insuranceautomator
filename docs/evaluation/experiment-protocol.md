@@ -4,7 +4,7 @@ Status: **design only, with no results.** See [Current status](#1-current-status
 
 Shared contract: `backend/app/evaluation/records.py` (`Configuration`, `Disposition`, `GoldLabel`,
 `ClaimOutcome`, `disposition_of`, `baseline_outcome`). Metric definitions: `backend/app/evaluation/metrics.py`.
-Policy under test: `claim-policy-6` (`backend/app/services/claim_policy.py:90`). Line references below
+Policy under test: `claim-policy-7` (section 9 analyses claim-policy-5/6; the claim-policy-7 changes are listed in [policy-hardening.md](policy-hardening.md)) (`backend/app/services/claim_policy.py:90`). Line references below
 point to the tree at commit `2d11550` plus the uncommitted `backend/app/evaluation/`; the claim-policy-6
 fixes (section 9, item 2) shifted `evidence_association.py` by 4 lines after line 149 and
 `verification_service.py` by 6 lines after line 93.

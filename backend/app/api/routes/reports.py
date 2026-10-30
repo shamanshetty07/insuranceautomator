@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, status
 
-from app.api.deps import DbSession, Storage, Vlm
+from app.api.deps import AppSettings, DbSession, Storage, Vlm
 from app.schemas.common import ErrorResponse
 from app.schemas.report import (
     ReportDetailRead,
@@ -15,6 +15,7 @@ from app.schemas.report import (
     report_summary,
 )
 from app.services import report_service
+from app.services.evidence_quality import QualityLimits
 
 router = APIRouter(tags=["reports"])
 
@@ -75,8 +76,9 @@ def verify_report(
     db: DbSession,
     storage: Storage,
     provider: Vlm,
+    settings: AppSettings,
     body: Annotated[ReportVerifyRequest | None, Body()] = None,
 ) -> ReportDetailRead:
     """Verify the report's stored claims in a new run (synchronous); claims are never changed."""
-    report_service.verify_stored_report(db, storage, provider, report_id)
+    report_service.verify_stored_report(db, storage, provider, report_id, QualityLimits.from_settings(settings))
     return report_detail(*report_service.get_report(db, report_id))
