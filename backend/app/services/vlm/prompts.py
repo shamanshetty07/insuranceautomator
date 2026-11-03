@@ -6,8 +6,12 @@ from dataclasses import dataclass
 from app.services.types import Detection, EvidenceBundle
 from app.services.verdict_mapping import OFFERED_LABELS
 
-GENERATOR_PROMPT_VERSION = "qwen-report-1"
-VERIFIER_PROMPT_VERSION = "qwen-verify-2"
+GENERATOR_PROMPT_VERSION = "qwen-report-2"
+VERIFIER_PROMPT_VERSION = "qwen-verify-3"
+
+GENERATOR_PREFILL = '{"claims": [{"text": "'
+
+VERIFIER_PREFILL = '{"label": "'
 
 VISIBLE_CLAIM_TYPES = ("visible_damage_presence", "damage_type", "damage_location")
 
@@ -43,11 +47,12 @@ causes of damage, hidden or structural damage, or repair recommendations.
 - Each claim is one short factual sentence about visible damage.
 - Answer with JSON only, no prose, exactly in this shape:
 {"claims": [{"text": "...", "type": "visible_damage_presence" | "damage_type" | "damage_location",
-  "damage_type": "<class name or null>", "images": ["img1"], "detections": ["det1"],
-  "evidence": [{"image": "img1", "detection": "det1" or null, "crop": [x_min, y_min, x_max, y_max] or null}]}]}
-- Use only the image and detection aliases given below. Crops are fractions of the image (0 to 1).
+  "damage_type": "<class name or null>", "images": ["img1"], "detections": ["det1"]}]}
+- Use only the image and detection aliases given below.
 - For a "damage_type" claim, set damage_type to the detector class name you mean and use \
 those same words in the text.
+- Every claim must be an object with the keys shown above, never a plain string. The top level \
+must be one object with a single "claims" key, not a list.
 - If you see no damage, answer {"claims": []}."""
 
 
@@ -79,6 +84,8 @@ _VERIFIER_LABELS = sorted(label.value for label in OFFERED_LABELS)
 VERIFIER_SYSTEM = f"""You check one statement about vehicle damage against the provided photographs.
 Judge only from what is visible. Answer with JSON only:
 {{"label": one of {", ".join(f'"{v}"' for v in _VERIFIER_LABELS)}, "explanation": "<one or two sentences>"}}
+The answer has exactly the two keys "label" and "explanation" and no others, for example no \
+"supported" key.
 Use "unverifiable" when the photographs cannot show whether the statement is true."""
 
 

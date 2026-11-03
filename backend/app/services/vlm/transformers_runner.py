@@ -132,6 +132,7 @@ class TransformersQwenRunner:
             },
         ]
         prompt = self._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompt += request.prefill
         inputs = self._processor(
             text=[prompt], images=list(request.images) or None, return_tensors="pt"
         ).to(self._device)
@@ -143,6 +144,7 @@ class TransformersQwenRunner:
                 max_time=request.max_time_seconds,
             )
         new_tokens = output[:, inputs["input_ids"].shape[1]:]
-        return self._processor.batch_decode(
+        decoded = self._processor.batch_decode(
             new_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )[0]
+        return request.prefill + decoded

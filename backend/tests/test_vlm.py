@@ -129,6 +129,11 @@ def test_fenced_json_is_accepted(evidence):
     assert len(generator(FakeRunner([raw])).generate_structured(evidence).claims.claims) == 1
 
 
+def test_single_element_list_wrapping_the_report_object_is_unwrapped(evidence):
+    raw = "```json\n[" + report_json(PRESENCE_CLAIM) + "]\n```"
+    assert len(generator(FakeRunner([raw])).generate_structured(evidence).claims.claims) == 1
+
+
 def test_zero_claims_is_a_valid_answer_attributed_to_the_model(evidence):
     report = generator(FakeRunner([report_json()])).generate_structured(evidence)
     assert report.claims.claims == () and report.report_text == NO_CLAIMS_TEXT
@@ -150,7 +155,7 @@ def test_out_of_scope_claim_types_are_kept_for_the_policy(evidence):
     ('{"claims": [{"text": "x", "type": "damage_type", "images": ["img1"], "confidence": NaN}]}', "not_json"),
     ("x" * 64_001, "too_long"),
     ('{"claims": "none"}', "schema"),
-    ('{"claims": [], "summary": "extra key"}', "schema"),
+    ('{"summary": "no claims key"}', "schema"),
     ('[]', "schema"),
     (report_json({"text": "x", "type": "damage_type", "images": ["img9"]}), "unknown_alias"),
     (report_json({"text": "x", "type": "damage_type", "images": ["img1"], "detections": ["det7"]}), "unknown_alias"),
@@ -333,8 +338,8 @@ def test_parse_verdict_returns_near_miss_labels_verbatim_so_they_map_to_nothing(
 def test_configs_record_greedy_decoding_and_prompt_versions():
     runner = FakeRunner()
     g, v = generator(runner).generation_config, verifier(runner).verification_config
-    assert (g.prompt_version, g.sampling.temperature, g.sampling.max_new_tokens) == ("qwen-report-1", 0, 1024)
-    assert (v.prompt_version, v.sampling.temperature, v.sampling.max_new_tokens) == ("qwen-verify-2", 0, 256)
+    assert (g.prompt_version, g.sampling.temperature, g.sampling.max_new_tokens) == ("qwen-report-2", 0, 1024)
+    assert (v.prompt_version, v.sampling.temperature, v.sampling.max_new_tokens) == ("qwen-verify-3", 0, 256)
 
 
 def test_generated_claims_flow_into_the_claim_policy(evidence):

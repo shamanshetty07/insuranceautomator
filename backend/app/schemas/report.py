@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.generated_report import EvidenceStrategy
+from app.schemas.human_review import HumanReviewDecisionRead
 from app.models.run_status import RunStatus
 from app.models.verification_result import VerificationLabel
 from app.schemas.claims import ClaimType, EvidenceReference, Verdict
@@ -43,11 +44,21 @@ class ClaimResultRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # Persisted verification results always have an ID.  Keeping this optional
+    # also lets callers render legacy/in-memory result shapes while a report is
+    # being assembled.
+    id: uuid.UUID | None = None
     verdict: Verdict | None
     needs_human_review: bool
     policy_reason_codes: list[str]
     verification_label: VerificationLabel | None
     explanation: str
+    # The normalized evidence-association record is persisted with each
+    # verification result.  Returning it lets a retrieved report explain why
+    # a claim was supported, rejected, or sent to review without rerunning a
+    # model or inferring evidence from the final verdict alone.
+    evidence_reference: dict[str, Any] | None = None
+    review_decision: HumanReviewDecisionRead | None = None
 
 
 class ReportClaimRead(BaseModel):

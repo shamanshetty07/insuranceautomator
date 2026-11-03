@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.schemas.claims import ClaimType, Verdict
 
 if TYPE_CHECKING:
+    from app.models.human_review_decision import HumanReviewDecision
     from app.models.verification_run import VerificationRun
 
 
@@ -109,3 +110,6 @@ class VerificationResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     verification_run: Mapped["VerificationRun"] = relationship(back_populates="results")
+    review_decision: Mapped["HumanReviewDecision | None"] = relationship(
+        back_populates="verification_result", cascade="all, delete-orphan", passive_deletes=True, uselist=False
+    )

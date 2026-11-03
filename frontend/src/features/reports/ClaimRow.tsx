@@ -1,16 +1,22 @@
+import { useState } from "react";
 import { apiUrl } from "../../lib/api";
 import { statusLabel } from "../../lib/format";
-import type { InspectionImage, ReportClaim } from "../../types/api";
+import type { AssessmentClaimStatus, HumanReviewOutcome, InspectionImage, ReportClaim } from "../../types/api";
 import { boxStyle } from "../detections/geometry";
+import { ClaimStatusBadge } from "./AssessmentDocument";
 import { VerdictBadge } from "./VerdictBadge";
 
 interface Props {
   claim: ReportClaim;
+  assessmentStatus?: AssessmentClaimStatus;
   images: Map<string, InspectionImage>;
+  onReviewDecision?: (verificationResultId: string, outcome: HumanReviewOutcome) => Promise<void>;
 }
 
-export function ClaimRow({ claim, images }: Props) {
+export function ClaimRow({ claim, assessmentStatus, images, onReviewDecision }: Props) {
   const result = claim.result;
+  const [reviewing, setReviewing] = useState<HumanReviewOutcome | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const evidence = [
     ...claim.evidence,
     ...claim.image_ids
@@ -22,7 +28,10 @@ export function ClaimRow({ claim, images }: Props) {
     <li className="space-y-2 rounded-lg border border-slate-200 bg-white p-4" aria-label={`Claim ${claim.claim_id}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="font-medium text-slate-900">{claim.text}</p>
-        <VerdictBadge result={result} />
+        <span className="flex flex-wrap items-center gap-1">
+          {assessmentStatus && <ClaimStatusBadge status={assessmentStatus} />}
+          <VerdictBadge result={result} />
+        </span>
       </div>
       <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
         <div>
@@ -49,6 +58,38 @@ export function ClaimRow({ claim, images }: Props) {
               ))}
             </ul>
           )}
+          {result.review_decision ? (
+            <p className="text-xs text-slate-700">
+              Human decision: <strong>{statusLabel(result.review_decision.outcome)}</strong>
+              {result.review_decision.reviewer_note ? ` — ${result.review_decision.reviewer_note}` : ""}
+            </p>
+          ) : result.id && onReviewDecision ? (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="text-xs text-slate-600">Human decision:</span>
+              {(["approved", "rejected"] as const).map((outcome) => (
+                <button
+                  key={outcome}
+                  type="button"
+                  disabled={reviewing !== null}
+                  onClick={async () => {
+                    setReviewing(outcome);
+                    setReviewError(null);
+                    try {
+                      await onReviewDecision(result.id!, outcome);
+                    } catch (error) {
+                      setReviewError(error instanceof Error ? error.message : "Could not save review decision.");
+                    } finally {
+                      setReviewing(null);
+                    }
+                  }}
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {reviewing === outcome ? "Saving…" : statusLabel(outcome)}
+                </button>
+              ))}
+              {reviewError && <span className="text-xs text-red-700" role="alert">{reviewError}</span>}
+            </div>
+          ) : null}
         </div>
       )}
       {result && (

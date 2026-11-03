@@ -27,6 +27,8 @@ from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
 from app.api.deps import get_storage  # noqa: E402
 from app.core.config import Settings, get_settings  # noqa: E402
+
+Settings.model_config["env_file"] = None
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.image_storage import ImageStorage  # noqa: E402

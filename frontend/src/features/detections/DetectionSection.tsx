@@ -75,9 +75,21 @@ export function DetectionSection({ inspectionId, refreshKey = 0 }: Props) {
       )}
       {detector.state.status === "success" &&
         (detector.state.data.available ? (
-          <p className="text-sm text-slate-600">
-            Model: {detector.state.data.model_name} {detector.state.data.model_version}
-          </p>
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>
+              Model: {detector.state.data.model_name} {detector.state.data.model_version}
+            </p>
+            {detector.state.data.classes && detector.state.data.classes.length > 0 && (
+              <p>
+                Classes: {detector.state.data.classes.join(", ")}
+              </p>
+            )}
+            <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+              This is a community YOLOv8 car-damage detector. It is not an official insurance model;
+              training data and accuracy have not been independently verified. Empty detections mean
+              the model found nothing, not that the vehicle is undamaged.
+            </p>
+          </div>
         ) : (
           <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             Damage detection is unavailable

@@ -42,7 +42,9 @@ class _RawClaim(_Strict):
     evidence: list[_RawEvidence] = []
 
 
-class _RawReport(_Strict):
+class _RawReport(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
     claims: list[_RawClaim]
 
 
@@ -76,6 +78,12 @@ def load_json_object(raw: str) -> Any:
         return json.loads(text, object_pairs_hook=_reject_duplicate_keys, parse_constant=_reject_constant)
     except (ValueError, RecursionError):
         raise VlmOutputError("The model output was not valid JSON.", code="not_json") from None
+
+
+def _unwrap_single(data: Any) -> Any:
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        return data[0]
+    return data
 
 
 def _resolve(aliases: AliasMap, raw: _RawClaim, claim_id: str) -> ExtractedClaim:
@@ -124,7 +132,7 @@ def _resolve(aliases: AliasMap, raw: _RawClaim, claim_id: str) -> ExtractedClaim
 
 def parse_structured_report(raw: str, aliases: AliasMap, max_claims: int) -> StructuredReport:
     """Model text -> StructuredReport whose report text is exactly its claims, in order."""
-    data = load_json_object(raw)
+    data = _unwrap_single(load_json_object(raw))
     try:
         report = _RawReport.model_validate(data)
     except ValidationError:

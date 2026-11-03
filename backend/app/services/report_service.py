@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import AppError
 from app.models.generated_report import EvidenceStrategy, GeneratedReport
+from app.models.verification_result import VerificationResult
 from app.models.inspection import Inspection
 from app.models.inspection_image import InspectionImage
 from app.models.report_claim import ReportClaim, ReportClaimImage
@@ -250,7 +251,7 @@ def get_report(db: Session, report_id: uuid.UUID) -> tuple[GeneratedReport, Veri
         .where(VerificationRun.generated_report_id == report_id)
         .order_by(VerificationRun.created_at.desc(), VerificationRun.id.desc())
         .limit(1)
-        .options(selectinload(VerificationRun.results))
+        .options(selectinload(VerificationRun.results).selectinload(VerificationResult.review_decision))
         .execution_options(populate_existing=True)
     ).first()
     return report, run
