@@ -54,6 +54,7 @@ function mockApi(opts: {
   generate?: () => Response | Promise<Response>;
   verify?: () => Response;
   list?: () => Response;
+  assessment?: unknown;
 }) {
   const state = { report: opts.report ?? null };
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -66,6 +67,9 @@ function mockApi(opts: {
       return json({ items: state.report ? [state.report] : [] });
     }
     if (url.endsWith("/reports/r1/verifications") && post) return opts.verify ? opts.verify() : json(verified, 201);
+    if (url.endsWith("/reports/r1/assessment")) {
+      return opts.assessment ? json(opts.assessment) : apiError(500, "internal_error", "no assessment");
+    }
     if (url.endsWith("/reports/r1")) return json(state.report);
     throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
   });
@@ -102,6 +106,36 @@ describe("ReportSection", () => {
     expect(await screen.findByText("There is a dent on the door.")).toBeInTheDocument();
     expect(posts(fetchMock, "/inspections/i1/reports")).toBe(1);
     expect(screen.getByText("Not verified")).toBeInTheDocument();
+  });
+
+  it("renders the structured assessment document around the claims when available", async () => {
+    const assessment = {
+      header: { report_id: "r1", inspection_id: "i1", inspection_title: null, generated_at: "2026-01-01T00:00:00Z",
+        inspection_type: "AI-assisted visual damage assessment", assessment_status: "pending_human_review", report_model: "qwen 1" },
+      vehicle: { make: "Not Provided", model: "Not Provided", year: "Not Provided", registration_number: "Not Provided", color: "Not Provided" },
+      executive_summary: "Summary text.", findings: [], claims: [
+        { claim_id: "c1", claim_text: "There is a dent on the door.", claim_type: "damage_type", damage_ids: [], image_ids: ["img1"],
+          status: "uncertain", verifier_label: "supported", explanation: "A dent is visible.", needs_human_review: true, review_reason_codes: [] },
+      ],
+      recommendations: ["Arrange a physical inspection."], cost_estimate: "No repair cost estimate is available.",
+      human_review: { ai_assessment_status: "AI-generated, verified by the verifier model", verification_status: "completed",
+        review_status: "pending", items: [] },
+      evidence_notice: "n", disclaimer: "Not a final insurance claim approval.",
+    };
+    mockApi({ report: verified, assessment });
+    render(<ReportSection inspectionId="i1" />);
+    expect(await screen.findByRole("heading", { name: "G. AI claim verification" })).toBeInTheDocument();
+    expect(screen.getByText("Summary text.")).toBeInTheDocument();
+    const row = screen.getByRole("listitem", { name: "Claim c1" });
+    expect(within(row).getByText("Uncertain")).toBeInTheDocument();
+    expect(within(row).getByText("Needs human review")).toBeInTheDocument();
+  });
+
+  it("falls back to the claim list when the assessment cannot be loaded", async () => {
+    mockApi({ report: verified });
+    render(<ReportSection inspectionId="i1" />);
+    expect(await screen.findByRole("listitem", { name: "Claim c1" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Report header/ })).not.toBeInTheDocument();
   });
 
   it("renders claim fields, verdict text, review reasons and the verifier explanation", async () => {

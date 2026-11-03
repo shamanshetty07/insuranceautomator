@@ -1,5 +1,6 @@
 import type {
   ApiFieldError,
+  AssessmentReport,
   DetectionRunList,
   DetectorStatus,
   Inspection,
@@ -7,6 +8,9 @@ import type {
   InspectionImage,
   InspectionImageList,
   InspectionList,
+  InspectionRunResult,
+  HumanReviewDecision,
+  HumanReviewOutcome,
   ReportDetail,
   ReportList,
   VlmStatus,
@@ -86,6 +90,13 @@ export const runDetection = (inspectionId: string, imageIds?: string[]) =>
     body: JSON.stringify({ image_ids: imageIds ?? null }),
   });
 
+/** Run detection, report generation, and verification as one server-side workflow. */
+export const runInspection = (inspectionId: string) =>
+  request<InspectionRunResult>(`/inspections/${encodeURIComponent(inspectionId)}/run`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
 export const listDetections = (inspectionId: string, latest = true) =>
   request<DetectionRunList>(`/inspections/${encodeURIComponent(inspectionId)}/detections?latest=${latest}`);
 
@@ -95,6 +106,9 @@ export const listReports = (inspectionId: string) =>
   request<ReportList>(`/inspections/${encodeURIComponent(inspectionId)}/reports`);
 
 export const getReport = (reportId: string) => request<ReportDetail>(`/reports/${encodeURIComponent(reportId)}`);
+
+export const getAssessment = (reportId: string) =>
+  request<AssessmentReport>(`/reports/${encodeURIComponent(reportId)}/assessment`);
 
 export const generateReport = (inspectionId: string) =>
   request<ReportDetail>(`/inspections/${encodeURIComponent(inspectionId)}/reports`, {
@@ -106,6 +120,16 @@ export const verifyReport = (reportId: string) =>
   request<ReportDetail>(`/reports/${encodeURIComponent(reportId)}/verifications`, {
     method: "POST",
     body: JSON.stringify({}),
+  });
+
+export const submitReviewDecision = (
+  verificationResultId: string,
+  outcome: HumanReviewOutcome,
+  reviewerNote?: string,
+) =>
+  request<HumanReviewDecision>(`/verification-results/${encodeURIComponent(verificationResultId)}/review-decision`, {
+    method: "POST",
+    body: JSON.stringify({ outcome, reviewer_note: reviewerNote || null }),
   });
 
 export function uploadImage(

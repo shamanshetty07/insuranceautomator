@@ -22,6 +22,16 @@ def _annotation(status: str = "adjudicated", annotator: str | None = "ann-01") -
     return {"annotator": annotator, "status": status, "annotated_at": "2026-10-01T12:00:00Z"}
 
 
+def _image_provenance() -> dict:
+    return {
+        "provenance": {
+            "source_kind": "own_photo",
+            "consent_or_license_ref": "test-record-own-photos-001",
+        },
+        "privacy_redacted": True,
+    }
+
+
 def _base() -> dict:
     return {
         "schema_version": "1",
@@ -43,6 +53,7 @@ def _base() -> dict:
                     }
                 ],
                 "image_quality": "ok",
+                **_image_provenance(),
             },
             {
                 "fixture_id": "img-b1",
@@ -51,6 +62,7 @@ def _base() -> dict:
                 "sha256": "b" * 64,
                 "visible_damage": [],
                 "image_quality": "blurry",
+                **_image_provenance(),
             },
         ],
         "claims": [
@@ -150,6 +162,12 @@ BAD_CASES = {
     "unknown_tag": lambda d: d["claims"][0].update(adversarial_tag="sneaky"),
     "empty_text": lambda d: d["claims"][0].update(text=" "),
     "bad_created": lambda d: d.update(created="yesterday"),
+    "real_image_missing_provenance": lambda d: d["images"][0].pop("provenance", None),
+    "real_image_missing_license_ref": lambda d: d["images"][0]["provenance"].pop("consent_or_license_ref", None),
+    "real_image_not_privacy_redacted": lambda d: d["images"][0].update(privacy_redacted=False),
+    "licensed_without_license_id": lambda d: d["images"][0].update(
+        provenance={"source_kind": "licensed", "consent_or_license_ref": "rec-1"}
+    ),
 }
 
 

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, String, Text, Uuid, func
+from sqlalchemy import DateTime, Enum, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -31,6 +31,11 @@ class Inspection(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     title: Mapped[str | None] = mapped_column(String(200))
     notes: Mapped[str | None] = mapped_column(Text)
+    vehicle_make: Mapped[str | None] = mapped_column(String(100))
+    vehicle_model: Mapped[str | None] = mapped_column(String(100))
+    vehicle_year: Mapped[int | None] = mapped_column(Integer)
+    vehicle_registration: Mapped[str | None] = mapped_column(String(32))
+    vehicle_color: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[InspectionStatus] = mapped_column(
         Enum(
             InspectionStatus,

@@ -124,7 +124,7 @@ def test_generation_provenance_is_recorded_by_the_server():
     run_ids = (uuid.UUID(int=21),)
     config = report_service.stored_generation_config(generator, report_service.EvidenceSet(bundle(), run_ids))
     dumped = config.model_dump(mode="json")
-    assert dumped["prompt_version"] == "qwen-report-1" and dumped["sampling"]["temperature"] == 0
+    assert dumped["prompt_version"] == "qwen-report-2" and dumped["sampling"]["temperature"] == 0
     assert dumped["model"] == {"weights_sha256": "f" * 64, "packages": {"transformers": None, "torch": None}}
     assert dumped["limits"]["max_claims"] == 5
     assert dumped["evidence"] == {"image_ids": [str(IMG1), str(IMG2)], "detection_run_ids": [str(run_ids[0])]}
@@ -146,7 +146,7 @@ def test_stored_configs_accept_rows_written_before_provenance_existed():
 def test_verification_run_config_comes_from_the_verifier():
     verifier = QwenClaimVerifier(FakeRunner(), VlmLimits())
     config = run_config(verifier, verifier_independent=False).model_dump(mode="json")
-    assert config["prompt_version"] == "qwen-verify-2" and config["policy_version"] == "claim-policy-7"
+    assert config["prompt_version"] == "qwen-verify-3" and config["policy_version"] == "claim-policy-7"
     assert config["verifier_independent"] is False and config["model"]["weights_sha256"] == "f" * 64
     with pytest.raises(TypeError):
         run_config(types.SimpleNamespace(model=ModelInfo("m", "1")), True)
@@ -237,7 +237,7 @@ def _report(claims):
     return types.SimpleNamespace(
         id=uuid.uuid4(), inspection_id=uuid.uuid4(), content="x", model_name="qwen", model_version="1",
         evidence_strategy="full_image", created_at=datetime.now(UTC), claims=claims,
-        generation_config={"prompt_version": "qwen-report-1"},
+        generation_config={"prompt_version": "qwen-report-2"},
     )
 
 
@@ -246,6 +246,7 @@ def _result(row_id, claim_id, verdict, review):
         report_claim_id=row_id, claim_id=claim_id, verdict=verdict, needs_human_review=review,
         policy_reason_codes=["verifier_not_independent"] if review else ["verifier_supported"],
         verification_label="supported", explanation="ok",
+        evidence_reference={"association": "associated", "integrity": "ok"},
     )
 
 
@@ -261,6 +262,7 @@ def test_report_detail_attaches_only_the_latest_runs_results():
     detail = report_detail(_report(rows), run)
     assert [c.claim_id for c in detail.claims] == ["c1", "c2", "c3"]
     assert detail.claims[0].result.needs_human_review and detail.claims[1].result is not None
+    assert detail.claims[0].result.evidence_reference == {"association": "associated", "integrity": "ok"}
     assert detail.claims[2].result is None
     assert detail.verification.review_count == 1 and detail.verification.verifier_independent is False
     assert detail.claim_count == 3 and detail.claims[0].evidence[0].crop.x_max == 0.5
@@ -292,12 +294,12 @@ def _migration(name):
     return module
 
 
-def test_migration_0006_is_the_single_head_and_its_frozen_lists_match():
+def test_migration_0008_is_the_single_head_and_0006_frozen_lists_match():
     from alembic.config import Config
 
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_heads() == ["0006"]
+    assert ScriptDirectory.from_config(cfg).get_heads() == ["0008"]
     module = _migration("0006_report_claims.py")
     assert (module.revision, module.down_revision) == ("0006", "0005")
     assert module.CLAIM_TYPES == tuple(m.value for m in ClaimType)

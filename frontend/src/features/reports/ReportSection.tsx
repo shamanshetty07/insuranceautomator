@@ -1,10 +1,21 @@
 import { useRef, useState } from "react";
 import { ErrorState } from "../../components/ErrorState";
 import { Spinner } from "../../components/Spinner";
-import { ApiError, generateReport, getReport, getVlmStatus, listImages, listReports, verifyReport } from "../../lib/api";
+import {
+  ApiError,
+  generateReport,
+  getAssessment,
+  getReport,
+  getVlmStatus,
+  listImages,
+  listReports,
+  submitReviewDecision,
+  verifyReport,
+} from "../../lib/api";
 import { formatDateTime, statusLabel } from "../../lib/format";
 import { useAsync } from "../../lib/useAsync";
 import type { InspectionImage, ReportDetail } from "../../types/api";
+import { AssessmentDocument } from "./AssessmentDocument";
 import { ClaimRow } from "./ClaimRow";
 
 interface Props {
@@ -26,7 +37,8 @@ async function loadReportView(inspectionId: string) {
   const [images, reports] = await Promise.all([listImages(inspectionId), listReports(inspectionId)]);
   const newest = reports.items[0];
   const report = newest ? await getReport(newest.id) : null;
-  return { images: images.items, report };
+  const assessment = newest ? await getAssessment(newest.id).catch(() => null) : null;
+  return { images: images.items, report, assessment };
 }
 
 export function ReportSection({ inspectionId, refreshKey = 0 }: Props) {
@@ -123,38 +135,60 @@ export function ReportSection({ inspectionId, refreshKey = 0 }: Props) {
             {loaded.images.length === 0 ? "Add images before generating a report." : "No report generated yet."}
           </p>
         ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-slate-600">
-              Generated {formatDateTime(report.created_at)} by {report.model_name} {report.model_version} ·{" "}
-              {statusLabel(report.evidence_strategy)}
-            </p>
-            {report.verification ? (
-              <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
-                <p>
-                  Verification {statusLabel(report.verification.status)} · verifier {report.verification.verifier_model}{" "}
-                  {report.verification.verifier_version}
-                  {report.verification.policy_version ? ` · policy ${report.verification.policy_version}` : ""} ·{" "}
-                  {reviewCount} claim(s) need human review
-                </p>
-                {report.verification.error_message && (
-                  <p className="mt-1 text-red-700">{report.verification.error_message}</p>
+          (() => {
+            const claimsSection = (
+              <div className="space-y-3">
+                {report.verification ? (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                    <p>
+                      Verification {statusLabel(report.verification.status)} · verifier {report.verification.verifier_model}{" "}
+                      {report.verification.verifier_version}
+                      {report.verification.policy_version ? ` · policy ${report.verification.policy_version}` : ""} ·{" "}
+                      {reviewCount} claim(s) need human review
+                    </p>
+                    {report.verification.error_message && (
+                      <p className="mt-1 text-red-700">{report.verification.error_message}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-600">Claims have not been verified yet.</p>
+                )}
+                {report.claims.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+                    The model described no visible damage; this is not a finding that the vehicle is undamaged.
+                  </p>
+                ) : (
+                  <ul className="space-y-3" aria-label="Report claims">
+                    {report.claims.map((claim) => (
+                      <ClaimRow
+                        key={claim.id}
+                        claim={claim}
+                        assessmentStatus={loaded.assessment?.claims.find((c) => c.claim_id === claim.claim_id)?.status}
+                        images={images}
+                        onReviewDecision={async (verificationResultId, outcome) => {
+                          await submitReviewDecision(verificationResultId, outcome);
+                          await view.reload();
+                        }}
+                      />
+                    ))}
+                  </ul>
                 )}
               </div>
-            ) : (
-              <p className="text-sm text-slate-600">Claims have not been verified yet.</p>
-            )}
-            {report.claims.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
-                The model described no visible damage; this is not a finding that the vehicle is undamaged.
-              </p>
-            ) : (
-              <ul className="space-y-3" aria-label="Report claims">
-                {report.claims.map((claim) => (
-                  <ClaimRow key={claim.id} claim={claim} images={images} />
-                ))}
-              </ul>
-            )}
-          </div>
+            );
+            return (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">
+                  Generated {formatDateTime(report.created_at)} by {report.model_name} {report.model_version} ·{" "}
+                  {statusLabel(report.evidence_strategy)}
+                </p>
+                {loaded.assessment ? (
+                  <AssessmentDocument assessment={loaded.assessment} images={images} claimsSection={claimsSection} />
+                ) : (
+                  claimsSection
+                )}
+              </div>
+            );
+          })()
         ))}
     </section>
   );

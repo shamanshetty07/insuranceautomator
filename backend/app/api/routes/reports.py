@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, status
 
 from app.api.deps import AppSettings, DbSession, Storage, Vlm
+from app.schemas.assessment import AssessmentReportRead
 from app.schemas.common import ErrorResponse
 from app.schemas.report import (
     ReportDetailRead,
@@ -14,7 +15,7 @@ from app.schemas.report import (
     report_detail,
     report_summary,
 )
-from app.services import report_service
+from app.services import assessment_service, report_service
 from app.services.evidence_quality import QualityLimits
 
 router = APIRouter(tags=["reports"])
@@ -63,6 +64,16 @@ def list_reports(inspection_id: uuid.UUID, db: DbSession) -> ReportList:
 def get_report(report_id: uuid.UUID, db: DbSession) -> ReportDetailRead:
     """The report, its claims as generated, and per-claim results of its latest verification run."""
     return report_detail(*report_service.get_report(db, report_id))
+
+
+@router.get(
+    "/reports/{report_id}/assessment",
+    response_model=AssessmentReportRead,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_assessment(report_id: uuid.UUID, db: DbSession) -> AssessmentReportRead:
+    """The structured insurance-style assessment assembled from stored detections, claims and reviews."""
+    return assessment_service.load_assessment(db, report_id)
 
 
 @router.post(

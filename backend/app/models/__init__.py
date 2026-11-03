@@ -3,6 +3,7 @@
 from app.models.damage_prediction import DamagePrediction
 from app.models.detection_run import DetectionRun
 from app.models.generated_report import EvidenceStrategy, GeneratedReport
+from app.models.human_review_decision import HumanReviewDecision, ReviewOutcome
 from app.models.inspection import Inspection, InspectionStatus
 from app.models.inspection_image import InspectionImage
 from app.models.report_claim import ReportClaim, ReportClaimImage
@@ -16,6 +17,7 @@ __all__ = [
     "DetectionRun",
     "EvidenceStrategy",
     "GeneratedReport",
+    "HumanReviewDecision",
     "Inspection",
     "InspectionImage",
     "InspectionStatus",
@@ -23,6 +25,7 @@ __all__ = [
     "ReportClaimImage",
     "ReportPrediction",
     "RunStatus",
+    "ReviewOutcome",
     "VerificationLabel",
     "VerificationResult",
     "VerificationRun",

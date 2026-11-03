@@ -23,6 +23,7 @@ class VlmRequest:
     images: tuple[Image.Image, ...]
     max_new_tokens: int
     max_time_seconds: float
+    prefill: str = ""
 
 
 class VlmRunner(Protocol):

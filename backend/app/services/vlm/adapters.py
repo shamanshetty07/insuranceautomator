@@ -106,6 +106,7 @@ class QwenStructuredReportGenerator:
             images=_images(evidence.images, self._limits),
             max_new_tokens=self._limits.max_new_tokens,
             max_time_seconds=max_time_for(self._limits.timeout_seconds),
+            prefill=prompts.GENERATOR_PREFILL,
         )
         raw = call_runner(self._runner, request, self._limits.timeout_seconds)
         return parse_structured_report(raw, aliases, self._limits.max_claims)
@@ -146,6 +147,7 @@ class QwenClaimVerifier:
                 images=images,
                 max_new_tokens=self.verification_config.sampling.max_new_tokens,
                 max_time_seconds=max_time_for(self._limits.timeout_seconds),
+                prefill=prompts.VERIFIER_PREFILL,
             )
             label, explanation = parse_verdict(call_runner(self._runner, request, self._limits.timeout_seconds))
             verdicts.append(

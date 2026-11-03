@@ -11,6 +11,11 @@ export interface Inspection {
   id: string;
   title: string | null;
   notes: string | null;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  vehicle_year?: number | null;
+  vehicle_registration?: string | null;
+  vehicle_color?: string | null;
   status: InspectionStatus;
   created_at: string;
   updated_at: string;
@@ -26,6 +31,11 @@ export interface InspectionList {
 export interface InspectionCreate {
   title?: string;
   notes?: string;
+  vehicle_make?: string;
+  vehicle_model?: string;
+  vehicle_year?: number;
+  vehicle_registration?: string;
+  vehicle_color?: string;
 }
 
 export interface ApiFieldError {
@@ -110,6 +120,13 @@ export interface DetectionRunList {
   items: DetectionRun[];
 }
 
+/** Result returned after the server runs detection, report generation, and verification. */
+export interface InspectionRunResult {
+  inspection: Inspection;
+  detections: DetectionRun[];
+  report: ReportDetail;
+}
+
 export type RunStatus = DetectionRunStatus;
 
 export interface VlmStatus {
@@ -153,11 +170,24 @@ export interface EvidenceReference {
 }
 
 export interface ClaimResult {
+  /** Present once a claim-level verification row has been persisted. */
+  id?: string;
   verdict: Verdict | null;
   needs_human_review: boolean;
   policy_reason_codes: string[];
   verification_label: VerificationLabel | null;
   explanation: string;
+  review_decision?: HumanReviewDecision | null;
+}
+
+export type HumanReviewOutcome = "approved" | "rejected";
+
+export interface HumanReviewDecision {
+  id: string;
+  verification_result_id: string;
+  outcome: HumanReviewOutcome;
+  reviewer_note: string | null;
+  reviewed_at: string;
 }
 
 export interface ReportClaim {
@@ -204,4 +234,88 @@ export interface ReportDetail extends ReportSummary {
 
 export interface ReportList {
   items: ReportSummary[];
+}
+
+export type AssessmentClaimStatus = "supported" | "uncertain" | "unsupported";
+export type AssessmentState =
+  | "no_findings"
+  | "awaiting_verification"
+  | "verification_failed"
+  | "pending_human_review"
+  | "ready";
+
+export interface AssessmentVehicle {
+  make: string;
+  model: string;
+  year: string;
+  registration_number: string;
+  color: string;
+}
+
+export interface AssessmentObservation {
+  claim_id: string;
+  text: string;
+  status: AssessmentClaimStatus;
+}
+
+export interface AssessmentFinding {
+  damage_id: string;
+  prediction_id: string;
+  image_id: string | null;
+  image_label: string;
+  component: string;
+  damage_type: string;
+  severity: string;
+  detection_confidence: number;
+  bounding_box: BoundingBox | null;
+  observations: AssessmentObservation[];
+  repair_considerations: string[];
+  additional_inspection: string[];
+}
+
+export interface AssessmentClaim {
+  claim_id: string;
+  claim_text: string;
+  claim_type: string;
+  damage_ids: string[];
+  image_ids: string[];
+  status: AssessmentClaimStatus;
+  verifier_label: string | null;
+  explanation: string;
+  needs_human_review: boolean;
+  review_reason_codes: string[];
+}
+
+export interface AssessmentReviewItem {
+  claim_id: string;
+  required: boolean;
+  outcome: string | null;
+  reviewer_note: string | null;
+  reviewed_at: string | null;
+}
+
+export interface AssessmentReport {
+  header: {
+    report_id: string;
+    inspection_id: string;
+    inspection_title: string | null;
+    generated_at: string;
+    inspection_type: string;
+    assessment_status: AssessmentState;
+    report_model: string;
+  };
+  vehicle: AssessmentVehicle;
+  executive_summary: string;
+  findings: AssessmentFinding[];
+  claims: AssessmentClaim[];
+  recommendations: string[];
+  cost_estimate: string;
+  human_review: {
+    ai_assessment_status: string;
+    verification_status: "not_run" | "running" | "completed" | "failed";
+    review_status: "not_started" | "not_required" | "pending" | "complete";
+    items: AssessmentReviewItem[];
+  };
+  evidence_notice: string;
+  disclaimer: string;
 }

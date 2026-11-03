@@ -11,6 +11,7 @@ interface Props {
 export function InspectionForm({ onCreated, onCancel }: Props) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [vehicle, setVehicle] = useState({ make: "", model: "", year: "", registration: "", color: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<ApiError | Error | null>(null);
 
@@ -22,6 +23,11 @@ export function InspectionForm({ onCreated, onCancel }: Props) {
       const created = await createInspection({
         title: title.trim() || undefined,
         notes: notes.trim() || undefined,
+        vehicle_make: vehicle.make.trim() || undefined,
+        vehicle_model: vehicle.model.trim() || undefined,
+        vehicle_year: vehicle.year.trim() ? Number(vehicle.year) : undefined,
+        vehicle_registration: vehicle.registration.trim() || undefined,
+        vehicle_color: vehicle.color.trim() || undefined,
       });
       onCreated(created);
     } catch (err) {
@@ -62,6 +68,46 @@ export function InspectionForm({ onCreated, onCancel }: Props) {
           className={field}
         />
       </div>
+      <fieldset className="grid gap-3 sm:grid-cols-2">
+        <legend className="text-sm font-medium">
+          Vehicle <span className="font-normal text-slate-500">(optional)</span>
+        </legend>
+        {(
+          [
+            ["make", "Make", 100],
+            ["model", "Model", 100],
+            ["registration", "Registration number", 32],
+            ["color", "Colour", 50],
+          ] as const
+        ).map(([key, label, max]) => (
+          <div key={key}>
+            <label htmlFor={`vehicle-${key}`} className="text-sm">
+              {label}
+            </label>
+            <input
+              id={`vehicle-${key}`}
+              value={vehicle[key]}
+              maxLength={max}
+              onChange={(e) => setVehicle({ ...vehicle, [key]: e.target.value })}
+              className={field}
+            />
+          </div>
+        ))}
+        <div>
+          <label htmlFor="vehicle-year" className="text-sm">
+            Manufacturing year
+          </label>
+          <input
+            id="vehicle-year"
+            type="number"
+            min={1886}
+            max={2100}
+            value={vehicle.year}
+            onChange={(e) => setVehicle({ ...vehicle, year: e.target.value })}
+            className={field}
+          />
+        </div>
+      </fieldset>
       {error && (
         <p role="alert" className="text-sm text-red-700">
           {error.message}

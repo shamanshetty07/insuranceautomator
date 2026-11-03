@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { ErrorState } from "../../components/ErrorState";
 import { Spinner } from "../../components/Spinner";
 import { StatusBadge } from "../../components/StatusBadge";
-import { ApiError, getInspection } from "../../lib/api";
+import { ApiError, getInspection, runInspection } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
 import { useAsync } from "../../lib/useAsync";
 import { DetectionSection } from "../detections/DetectionSection";
@@ -14,6 +14,24 @@ export function InspectionDetailPage() {
   const { inspectionId = "" } = useParams();
   const { state, reload } = useAsync(() => getInspection(inspectionId), [inspectionId]);
   const [imagesVersion, setImagesVersion] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  async function runCompleteInspection() {
+    if (running) return;
+    setRunning(true);
+    setRunError(null);
+    try {
+      await runInspection(inspectionId);
+      await reload();
+      setImagesVersion((version) => version + 1);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Inspection processing failed.");
+      await reload();
+    } finally {
+      setRunning(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -48,6 +66,23 @@ export function InspectionDetailPage() {
               <dd className="whitespace-pre-wrap">{state.data.notes ?? "No notes."}</dd>
             </div>
           </dl>
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-4">
+            <div>
+              <h2 className="font-medium">Run complete inspection</h2>
+              <p className="text-sm text-slate-600">
+                Runs the configured local detector, generates a report, and verifies its claims. It can take several minutes.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={runCompleteInspection}
+              disabled={running || state.data.status === "processing"}
+              className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            >
+              {running || state.data.status === "processing" ? "Processing inspection…" : "Run inspection"}
+            </button>
+            {runError && <p className="w-full text-sm text-red-700" role="alert">{runError}</p>}
+          </section>
           <ImagesSection inspectionId={state.data.id} onChange={() => setImagesVersion((v) => v + 1)} />
           <DetectionSection inspectionId={state.data.id} refreshKey={imagesVersion} />
           <ReportSection inspectionId={state.data.id} refreshKey={imagesVersion} />
