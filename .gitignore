@@ -27,6 +27,10 @@ frontend/dist/
 *.ckpt
 *.bin
 models/weights/
+models/
+
+# Local test images
+testdata/
 
 # Uploaded / generated images live under storage/ (ignored except the placeholder)
 storage/inspections/*
