@@ -1,0 +1,21 @@
+language: en-US
+
+reviews:
+  profile: assertive
+
+  request_changes_workflow: false
+
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: true
+    base_branches:
+      - ".*"
+    ignore_title_keywords: []
+
+chat:
+  auto_reply: true
